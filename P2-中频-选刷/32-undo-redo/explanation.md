@@ -1,221 +1,170 @@
-# 32 - 撤销/重做（Undo/Redo）讲解
+# 32 - 撤销/重做 - 讲解
 
-## 第一步：理解核心问题
+## 第一步：理解问题
 
-撤销/重做的本质是一个 **状态时间线管理** 问题。
+撤销/重做的本质是**状态时间线管理**。关键约束：
 
-```
-时间线：  State0 → State1 → State2 → State3 → State4
-                                    ↑
-                                 当前位置
+- **撤销**回到"过去"的状态
+- **重做**恢复"未来"的状态
+- **执行新操作**时，当前指针之后的"未来"必须被丢弃（历史分支被覆盖）
 
-undo:    指针左移  →  State2 → State1
-redo:    指针右移  →  State2 → State3 → State4
-```
-
-关键约束：
-- **撤销**是回到"过去"的状态
-- **重做**是恢复"未来"的状态
-- **执行新操作**时，当前指针之后的"未来"必须被丢弃（因为历史分支被覆盖了）
-
-数据结构选择：**栈**（或数组 + 指针）。undo 栈保存过去，redo 栈保存未来。
+数据结构选择：**数组 + 指针**（快照模式）或 **双栈**（命令模式）。
 
 ---
 
-## 第二步：快照模式 — 最直观的方案
+## 第二步：核心思路
 
-### 核心思路
-
-每次操作时，把整个状态 **完整复制一份** 存起来。undo 就是回到上一个副本，redo 就是回到下一个副本。
-
-```
-快照历史（数组 + 指针）：
-
-[S0, S1, S2, S3]
-              ↑
-           currentIndex
-
-undo → currentIndex-- → 指向 S2
-redo → currentIndex++ → 指向 S3
-```
-
-### 实现要点
-
-```js
-// execute：保存新快照，清除"未来"
-execute(newState) {
-  this.history = this.history.slice(0, this.currentIndex + 1); // 丢弃未来
-  this.history.push(deepClone(newState));                       // 保存新快照
-  this.currentIndex++;
-}
-
-// undo：指针前移
-undo() {
-  if (this.currentIndex > 0) this.currentIndex--;
-}
-
-// redo：指针后移
-redo() {
-  if (this.currentIndex < this.history.length - 1) this.currentIndex++;
-}
-```
-
-### 优缺点
-
-| 优点 | 缺点 |
-|------|------|
-| 实现简单，容易理解 | 内存消耗大（每步存完整状态） |
-| 状态恢复可靠（直接替换） | 深拷贝性能开销 |
-| 无需关心操作细节 | 状态对象越大越浪费 |
-
-**适用场景**：状态较小、操作复杂的场景（如表单编辑器、简单绘图工具）。
-
----
-
-## 第三步：命令模式 — 更灵活的方案
-
-### 核心思路
-
-不保存状态本身，而是保存 **操作（命令）**。每个命令知道自己怎么执行（execute）和怎么撤销（undo）。
-
-```
-undoStack:  [cmd1, cmd2, cmd3]  ← 已执行的命令
-redoStack:  []                  ← 被撤销的命令
-
-undo: 从 undoStack 弹出 cmd3，执行 cmd3.undo()，压入 redoStack
-redo: 从 redoStack 弹出 cmd3，执行 cmd3.execute()，压入 undoStack
-```
-
-### 实现要点
-
-```js
-// execute：执行命令，压入 undo 栈，清空 redo 栈
-execute(command) {
-  this.currentState = command.execute(this.currentState);
-  this.undoStack.push(command);
-  this.redoStack = [];  // 新操作覆盖 redo
-}
-
-// undo：弹出 undo 栈顶命令，执行其 undo，压入 redo 栈
-undo() {
-  if (this.undoStack.length === 0) return this._deepClone(this.currentState);
-  const cmd = this.undoStack.pop();
-  this.currentState = cmd.undo(this.currentState);
-  this.redoStack.push(cmd);
-  return this._deepClone(this.currentState);
-}
-
-// redo：弹出 redo 栈顶命令，执行其 execute，压入 undo 栈
-redo() {
-  if (this.redoStack.length === 0) return this._deepClone(this.currentState);
-  const cmd = this.redoStack.pop();
-  this.currentState = cmd.execute(this.currentState);
-  this.undoStack.push(cmd);
-  return this._deepClone(this.currentState);
-}
-```
-
-### 命令对象示例
-
-```js
-const addText = {
-  name: 'addText',
-  execute: (state) => ({ ...state, text: state.text + 'A' }),
-  undo: (state) => ({ ...state, text: state.text.slice(0, -1) }),
-};
-```
-
-### 优缺点
-
-| 优点 | 缺点 |
-|------|------|
-| 内存高效（只存操作，不存状态） | 命令必须可逆（undo 逻辑要正确） |
-| 灵活（可组合、可序列化） | 实现复杂度较高 |
-| 可记录有意义的操作名称 | 状态恢复依赖命令链的正确性 |
-
-**适用场景**：状态较大、操作明确且可逆的场景（如画图工具、代码编辑器、游戏）。
-
----
-
-## 第四步：两种模式对比
+两种方案的对比：
 
 | 维度 | 快照模式 | 命令模式 |
 |------|----------|----------|
 | 存储内容 | 完整状态副本 | 操作函数（execute/undo） |
-| 内存开销 | O(n × stateSize) | O(n × commandSize)，取决于命令复杂度 |
+| 内存开销 | O(n × stateSize) | O(n × commandSize) |
 | 实现复杂度 | 低 | 中 |
 | undo 可靠性 | 高（直接恢复快照） | 取决于 undo 实现的正确性 |
-| 命令可逆性要求 | 无（快照不需要） | 必须可逆 |
-| 序列化/持久化 | 难（需要序列化整个状态） | 易（命令可以序列化为 JSON） |
 | 典型应用 | 表单、简单编辑器 | Photoshop、VS Code、游戏引擎 |
-
-### 选择建议
-
-- **状态小、操作复杂** → 快照模式（简单可靠）
-- **状态大、操作明确** → 命令模式（省内存）
-- **需要网络同步/持久化** → 命令模式（可以传输命令而非完整状态）
-- **不确定时** → 先用快照模式，性能有问题再优化为命令模式
 
 ---
 
-## 第五步：进阶优化与面试追问
+## 第三步：逐步实现
 
-### 1. 限制历史记录数量
+### 3.1 快照模式 — execute
 
-```js
-execute(newState) {
-  this.history.push(deepClone(newState));
-  // 只保留最近 50 条
-  if (this.history.length > 50) {
-    this.history.shift(); // 丢弃最早的历史
+```javascript
+class SnapshotUndoRedo {
+  constructor(initialState) {
+    this.history = [this._deepClone(initialState)];
+    this.currentIndex = 0;
   }
-  this.currentIndex = this.history.length - 1;
+
+  execute(newState) {
+    this.history = this.history.slice(0, this.currentIndex + 1);
+    this.history.push(this._deepClone(newState));
+    this.currentIndex = this.history.length - 1;
+  }
+```
+
+**`slice(0, currentIndex + 1)`**：丢弃当前指针之后的所有快照。这是"新操作覆盖 redo 历史"的核心逻辑。
+
+**`_deepClone`**：必须深拷贝，否则外部修改 state 会影响历史快照。
+
+### 3.2 快照模式 — undo / redo
+
+```javascript
+  undo() {
+    if (this.currentIndex > 0) {
+      this.currentIndex--;
+    }
+    return this._deepClone(this.history[this.currentIndex]);
+  }
+
+  redo() {
+    if (this.currentIndex < this.history.length - 1) {
+      this.currentIndex++;
+    }
+    return this._deepClone(this.history[this.currentIndex]);
+  }
+```
+
+undo 和 redo 本质就是移动指针。边界条件：已经在最早/最晚状态时，保持不动。
+
+### 3.3 命令模式 — execute
+
+```javascript
+class CommandUndoRedo {
+  constructor(initialState) {
+    this.currentState = this._deepClone(initialState);
+    this.undoStack = [];
+    this.redoStack = [];
+    this.history = [];
+  }
+
+  execute(command) {
+    this.currentState = command.execute(this.currentState);
+    this.undoStack.push(command);
+    this.redoStack = [];
+    this.history.push(command.name);
+  }
+```
+
+执行命令：调用 `command.execute` 获取新状态，命令压入 undo 栈，清空 redo 栈。
+
+### 3.4 命令模式 — undo / redo
+
+```javascript
+  undo() {
+    if (this.undoStack.length === 0) {
+      return this._deepClone(this.currentState);
+    }
+
+    const command = this.undoStack.pop();
+    this.currentState = command.undo(this.currentState);
+    this.redoStack.push(command);
+
+    return this._deepClone(this.currentState);
+  }
+
+  redo() {
+    if (this.redoStack.length === 0) {
+      return this._deepClone(this.currentState);
+    }
+
+    const command = this.redoStack.pop();
+    this.currentState = command.execute(this.currentState);
+    this.undoStack.push(command);
+
+    return this._deepClone(this.currentState);
+  }
 }
 ```
 
-### 2. 快照模式内存优化
+**undo**：从 undo 栈弹出命令，执行其 `undo` 方法，命令压入 redo 栈。
 
-- **增量快照**：只存储差异（delta），而非完整状态
-- **结构共享**：利用 Immutable.js 等库实现结构共享，减少内存占用
-- **压缩**：对历史快照进行压缩存储
+**redo**：从 redo 栈弹出命令，重新执行其 `execute` 方法，命令压回 undo 栈。
 
-### 3. 与 React 状态管理结合
+命令对象示例：
 
-```js
-// Redux 的 time-travel 本质就是快照模式
-// 每个 action 对应一个状态快照
-const [history, dispatch] = useReducerWithHistory(reducer, initialState);
-```
-
-### 4. 命令模式的组合命令
-
-```js
-// 宏命令：将多个命令组合为一个
-const macroCommand = {
-  name: 'batchUpdate',
-  execute: (state) => commands.reduce((s, cmd) => cmd.execute(s), state),
-  undo: (state) => [...commands].reverse().reduce((s, cmd) => cmd.undo(s), state),
-};
-```
-
-### 5. 防抖优化
-
-对于高频操作（如拖拽），可以防抖后再保存快照：
-
-```js
-const debouncedSave = debounce(() => {
-  manager.execute(currentState);
-}, 300);
+```javascript
+const increment = {
+  name: 'increment',
+  execute: (state) => ({ ...state, count: state.count + 1 }),
+  undo: (state) => ({ ...state, count: state.count - 1 }),
+}
 ```
 
 ---
 
-## 总结
+## 第四步：常见追问
 
-| 概念 | 说明 |
-|------|------|
-| 栈结构 | undo/redo 的底层数据结构，LIFO 管理操作历史 |
-| 快照模式 | 保存状态副本，简单直接，内存换可靠性 |
-| 命令模式 | 保存操作函数，灵活高效，需要可逆性保证 |
-| 分支管理 | 执行新操作时清除 redo 历史，这是所有方案的共同规则 |
-| 适用场景 | 根据状态大小、操作复杂度、持久化需求选择方案 |
+### Q1：两种模式各自的优缺点？
+
+- **快照模式**：实现简单、状态恢复可靠，但内存消耗大
+- **命令模式**：内存高效、可序列化，但命令必须可逆
+
+### Q2：快照模式如果状态很大如何优化？
+
+- **增量快照**：只存储差异（delta），而非完整状态
+- **结构共享**：利用 Immutable.js 等库实现结构共享
+- **限制历史数量**：只保留最近 N 步
+
+### Q3：命令模式中如果 undo 不是完全可逆的怎么办？
+
+这是命令模式的根本限制。对于不可逆操作（如网络请求），可以：
+- 在 execute 时保存快照作为回退点
+- 用混合模式：关键操作用快照，普通操作用命令
+
+### Q4：如何与 React 状态管理结合？
+
+Redux 的 time-travel 本质就是快照模式——每个 action 对应一个状态快照。
+
+---
+
+## 第五步：易错点
+
+| 易错点 | 说明 |
+|-------|------|
+| execute 后不清空 redo | 新操作必须丢弃"未来"历史 |
+| 不做深拷贝 | 外部修改 state 会污染历史 |
+| undo 边界不处理 | 已在最早状态时应保持不动 |
+| 命令模式 redo 边界不处理 | 已在最新状态时应保持不动 |
+| 命令的 undo 不可逆 | 必须保证 execute 和 undo 互为逆操作 |

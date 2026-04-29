@@ -1,31 +1,14 @@
-/**
- * FormValidator - 表单校验引擎
- * 支持同步 + 异步规则，链式调用，fail-fast，错误聚合
- */
-
 class FormValidator {
   constructor() {
-    // field -> rules[]
     this.rules = new Map()
   }
 
-  /**
-   * 链式注册校验规则
-   * @param {string} field - 字段名
-   * @param {Array} rules - 规则数组
-   * @returns {FormValidator} this（支持链式调用）
-   */
   addRule(field, rules) {
-    // 合并同一字段的多次 addRule 调用
     const existing = this.rules.get(field) || []
     this.rules.set(field, [...existing, ...rules])
-    return this // 链式调用关键
+    return this
   }
 
-  /**
-   * 清除规则
-   * @param {string} [field] - 不传则清除全部
-   */
   clearRules(field) {
     if (field) {
       this.rules.delete(field)
@@ -35,12 +18,6 @@ class FormValidator {
     return this
   }
 
-  /**
-   * 校验单个字段（同步规则 fail-fast + 异步规则并行）
-   * @param {string} field
-   * @param {*} value
-   * @returns {Promise<string[]>} 错误消息数组
-   */
   async validateField(field, value) {
     const rules = this.rules.get(field)
     if (!rules) return []
@@ -49,21 +26,18 @@ class FormValidator {
     const asyncTasks = []
 
     for (const rule of rules) {
-      // 异步规则收集起来稍后并行执行
       if (rule.type === 'async') {
         asyncTasks.push(rule)
         continue
       }
 
-      // 同步规则立即执行，失败则 fail-fast
       const err = this._runSyncRule(rule, value, field)
       if (err) {
         errors.push(err)
-        return errors // fail-fast：同步失败直接返回
+        return errors
       }
     }
 
-    // 所有同步规则通过后，并行执行异步规则
     if (asyncTasks.length > 0) {
       const results = await Promise.all(
         asyncTasks.map(async (rule) => {
@@ -81,15 +55,9 @@ class FormValidator {
     return errors
   }
 
-  /**
-   * 执行校验（所有字段并行）
-   * @param {Object} formData - { field: value }
-   * @returns {Promise<{ valid: boolean, errors: Object }>}
-   */
   async validate(formData) {
     const fields = Array.from(this.rules.keys())
 
-    // 所有字段并行校验
     const results = await Promise.all(
       fields.map(async (field) => {
         const value = formData[field]
@@ -98,7 +66,6 @@ class FormValidator {
       })
     )
 
-    // 聚合错误
     const errors = {}
     let valid = true
     for (const { field, errors: fieldErrors } of results) {
@@ -111,17 +78,10 @@ class FormValidator {
     return { valid, errors }
   }
 
-  /**
-   * 执行单条同步规则
-   * @param {Object} rule
-   * @param {*} value
-   * @returns {string|null} 错误消息或 null
-   */
   _runSyncRule(rule, value, fieldName = '字段') {
     const { type, message } = rule
     const fieldLabel = fieldName || '字段'
 
-    // null/undefined 除 required 外统一交由 required 处理
     if (value === null || value === undefined) {
       if (type === 'required') {
         return message || `${fieldLabel}不能为空`

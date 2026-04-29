@@ -26,12 +26,10 @@
 
 **解决方案**：用一个"缓存"记录已经拷贝过的对象，遇到重复的直接返回副本。
 
-```javascript
-// 为什么是 WeakMap 而不是 Map？
-// 1. WeakMap 的 key 必须是对象 — 正好符合我们的场景（只有对象需要缓存）
-// 2. WeakMap 是弱引用 — 如果原对象被 GC 回收，缓存条目也会自动清除，不会内存泄漏
-// 3. Map 作为 key 会强引用原对象，即使外部不再使用该对象，Map 仍持有引用，导致无法 GC
-```
+为什么是 WeakMap 而不是 Map？
+1. WeakMap 的 key 必须是对象 — 正好符合我们的场景（只有对象需要缓存）
+2. WeakMap 是弱引用 — 如果原对象被 GC 回收，缓存条目也会自动清除，不会内存泄漏
+3. Map 作为 key 会强引用原对象，即使外部不再使用该对象，Map 仍持有引用，导致无法 GC
 
 **执行流程**：
 ```
@@ -55,9 +53,8 @@ if (obj === null || typeof obj !== 'object') {
   return obj;
 }
 ```
-- `null` 的 `typeof` 是 `'object'`，必须前置判断
-- 基本类型直接返回，不需要拷贝
-- 函数的 `typeof` 是 `'function'`，不会进入此分支，自然返回引用（不拷贝函数体）
+
+`null` 的 `typeof` 是 `'object'`，必须前置判断。基本类型直接返回，不需要拷贝。函数的 `typeof` 是 `'function'`，不会进入此分支，自然返回引用（不拷贝函数体）。
 
 ### 3.2 循环引用检查
 
@@ -66,6 +63,7 @@ if (cache.has(obj)) {
   return cache.get(obj);
 }
 ```
+
 如果已经拷贝过这个对象，直接返回之前的副本，打断递归。
 
 ### 3.3 特殊类型处理
@@ -79,32 +77,60 @@ if (cache.has(obj)) {
 
 **关键细节**：Map 和 Set 必须 **先存入 cache 再遍历**，否则遇到值引用自身时仍然会死循环。
 
+以 Map 为例：
+
+```javascript
+if (obj instanceof Map) {
+  const mapCopy = new Map();
+  cache.set(obj, mapCopy);
+  obj.forEach((value, key) => {
+    mapCopy.set(deepClone(key, cache), deepClone(value, cache));
+  });
+  return mapCopy;
+}
+```
+
+先 `cache.set(obj, mapCopy)` 把空壳 Map 存入缓存，再遍历填充。如果先遍历再缓存，当 Map 的 value 引用自身时会无限递归。
+
 ### 3.4 普通对象 & 数组
 
 ```javascript
 const clone = Array.isArray(obj) ? [] : Object.create(Object.getPrototypeOf(obj));
-cache.set(obj, clone);  // 先缓存，再递归
+cache.set(obj, clone);
 for (const key of Object.keys(obj)) {
   clone[key] = deepClone(obj[key], cache);
 }
 ```
 
-使用 `Object.create(Object.getPrototypeOf(obj))` 保留原型链，使 `clone instanceof MyClass` 等判断仍然成立。
+使用 `Object.create(Object.getPrototypeOf(obj))` 保留原型链，使 `clone instanceof MyClass` 等判断仍然成立。`cache.set` 必须在递归之前，防止循环引用死循环。
 
 ### 3.5 Symbol 属性
 
-普通 `for...in` 和 `Object.keys()` 都不会遍历 Symbol 属性，需要额外用 `Object.getOwnPropertySymbols()` 获取。
+普通 `for...in` 和 `Object.keys()` 都不会遍历 Symbol 属性，需要额外用 `Object.getOwnPropertySymbols()` 获取：
+
+```javascript
+const symbolKeys = Object.getOwnPropertySymbols(obj);
+for (const sym of symbolKeys) {
+  if (Object.propertyIsEnumerable.call(obj, sym)) {
+    clone[sym] = deepClone(obj[sym], cache);
+  }
+}
+```
+
+只拷贝可枚举的 Symbol 属性，与普通属性的行为保持一致。
 
 ## 第四步：常见变体
 
 ### 4.1 structuredClone（现代方案）
 
+浏览器原生深拷贝（Node.js 17.0+ / Chrome 98+ / Firefox 94+ / Safari 15.4+）：
+
 ```javascript
-// 浏览器原生深拷贝（Node.js 17.0+ / Chrome 98+ / Firefox 94+ / Safari 15.4+）
 const cloned = structuredClone(value);
 ```
 
 **优点**：原生支持循环引用、Date、RegExp、Map、Set、ArrayBuffer 等
+
 **缺点**：
 - 不支持函数（会抛错）
 - 不支持 DOM 节点
@@ -126,6 +152,7 @@ function deepClone(obj) {
   });
 }
 ```
+
 利用浏览器消息传递的结构化克隆算法，但是异步的，且有大小限制。
 
 ## 第五步：易错点
@@ -133,13 +160,14 @@ function deepClone(obj) {
 ### ❌ 易错 1：先递归再缓存
 
 ```javascript
-// 错误！循环引用时死循环
 const clone = {};
 for (const key of Object.keys(obj)) {
   clone[key] = deepClone(obj[key], cache);
 }
-cache.set(obj, clone);  // ← 太晚了
+cache.set(obj, clone);
 ```
+
+> ⚠️ 这里 `cache.set` 放在递归之后，太晚了——循环引用时会死循环。
 
 **正确**：创建空壳后立即 `cache.set`，再递归填充。
 
@@ -147,31 +175,39 @@ cache.set(obj, clone);  // ← 太晚了
 
 ```javascript
 if (typeof obj !== 'object') return obj;
-// 当 obj 为 null 时，typeof null === 'object'，会进入后续逻辑导致崩溃
 ```
+
+> ⚠️ 当 `obj` 为 `null` 时，`typeof null === 'object'`，会进入后续逻辑导致崩溃。必须先判断 `null`。
+
 
 ### ❌ 易错 3：用 Map 代替 WeakMap
 
 ```javascript
-const cache = new Map();  // 会强引用所有拷贝过的对象
-// 即使外部不再需要这些对象，GC 也无法回收
+const cache = new Map();
 ```
+
+> ⚠️ `Map` 会强引用所有拷贝过的对象，即使外部不再需要这些对象，GC 也无法回收。应使用 `WeakMap`。
+
 
 ### ❌ 易错 4：忽略 Symbol 键
 
 ```javascript
 const sym = Symbol('id');
 const obj = { [sym]: 123 };
-// Object.keys(obj) → []，Symbol 属性丢失
 ```
+
+> ⚠️ `Object.keys(obj)` 返回空数组，Symbol 属性会丢失。需要用 `Object.getOwnPropertySymbols()` 额外处理。
+
 
 ### ❌ 易错 5：Map 的 key 是对象时没递归
 
 ```javascript
 const key = { id: 1 };
 const map = new Map([[key, 'value']]);
-// 如果只拷贝 value 不拷贝 key，key 仍然是原对象的引用
 ```
+
+> ⚠️ 如果只拷贝 value 不拷贝 key，key 仍然是原对象的引用。Map 的 key 如果是对象，也需要递归拷贝。
+
 
 ### ❌ 易错 6：函数的处理策略
 
@@ -182,19 +218,21 @@ const map = new Map([[key, 'value']]);
 ```javascript
 const err = new Error('fail');
 const clone = deepClone(err);
-// 如果走普通对象分支，clone.message 会丢失（Error 的 message 不是可枚举属性）
-// 正确做法：用 new obj.constructor(obj.message) 构造，并保留 stack
 ```
+
+> ⚠️ 如果走普通对象分支，`clone.message` 会丢失（Error 的 `message` 不是可枚举属性）。正确做法：用 `new obj.constructor(obj.message)` 构造，并保留 `stack`。
+
 
 ### ❌ 易错 8：RegExp 的 lastIndex 状态
 
 ```javascript
 const reg = /hello/g;
-reg.exec('hello world');  // lastIndex 变为 5
+reg.exec('hello world');
 const clone = deepClone(reg);
-// clone.lastIndex 为 0，不保留原正则的匹配状态
-// 实际面试中通常不追问，但值得主动提及
 ```
+
+> ⚠️ `clone.lastIndex` 为 0，不保留原正则的匹配状态（`lastIndex` 变为 5）。实际面试中通常不追问，但值得主动提及。
+
 
 ---
 

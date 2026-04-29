@@ -23,51 +23,30 @@
 ## 示例
 
 ```javascript
-// 1. 基本类型
-deepClone(42);          // 42
-deepClone('hello');     // 'hello'
-deepClone(null);        // null
+// 嵌套对象
+const obj = { a: 1, b: { c: [3, 4] } };
+const cloned = deepClone(obj);
+cloned.b.c.push(5);
+console.log(obj.b.c);  // [3, 4]  原对象不受影响
 
-// 2. 嵌套对象 + 数组
-const obj1 = { a: 1, b: { c: 2, d: [3, 4] } };
-const cloned1 = deepClone(obj1);
-cloned1.b.d.push(5);
-console.log(obj1.b.d);  // [3, 4]  原对象不受影响
-
-// 3. 循环引用
+// 循环引用
 const obj2 = { name: 'root' };
-obj2.self = obj2;  // 自引用
+obj2.self = obj2;
 const cloned2 = deepClone(obj2);
-console.log(cloned2.self === cloned2);  // true  拷贝后循环引用关系保持
-console.log(cloned2.self !== obj2);     // true  但不是同一个对象
+console.log(cloned2.self === cloned2);  // true
+console.log(cloned2.self !== obj2);     // true
 
-// 4. 特殊类型
-const obj3 = {
-  date: new Date('2024-01-01'),
-  reg: /hello/gi,
-  map: new Map([['key', 'value']]),
-  set: new Set([1, 2, 3]),
-};
+// 特殊类型
+const obj3 = { date: new Date('2024-01-01'), reg: /hello/gi, map: new Map([['k', 'v']]) };
 const cloned3 = deepClone(obj3);
-console.log(cloned3.date instanceof Date);     // true
-console.log(cloned3.date !== obj3.date);        // true
-console.log(cloned3.reg.source === 'hello');    // true
-console.log(cloned3.map.get('key'));            // 'value'
+console.log(cloned3.date instanceof Date);  // true
+console.log(cloned3.date !== obj3.date);     // true
 
-// 5. 互引用
-const a = { name: 'a' };
-const b = { name: 'b' };
-a.ref = b;
-b.ref = a;
-const clonedA = deepClone(a);
-console.log(clonedA.ref.ref === clonedA);  // true
-
-// 6. Error 对象
+// Error 对象
 const err = new Error('something went wrong');
 const clonedErr = deepClone(err);
-console.log(clonedErr.message);              // 'something went wrong'
-console.log(clonedErr instanceof Error);     // true
-console.log(clonedErr !== err);              // true
+console.log(clonedErr.message);           // 'something went wrong'
+console.log(clonedErr instanceof Error);  // true
 ```
 
 > 💡 **现代替代**：`structuredClone(value)` 是浏览器/Node.js 17+ 原生深拷贝方案，支持循环引用和大多数内置类型，但不支持函数、DOM 节点和 Symbol 属性。

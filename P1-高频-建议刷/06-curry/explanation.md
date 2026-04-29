@@ -6,11 +6,15 @@
 
 柯里化（Currying）是一种函数转换技术：把一个接受 `n` 个参数的函数，转换为 `n` 个接受单个参数的函数链式调用。
 
-```
-// 普通函数
-f(a, b, c) → result
+普通函数：
 
-// 柯里化后
+```
+f(a, b, c) → result
+```
+
+柯里化后：
+
+```
 f(a)(b)(c) → result
 ```
 
@@ -58,51 +62,43 @@ curry(fn) → 返回 curried 函数
 
 ## 第三步：逐步实现
 
-### 版本 1：最简实现（只支持逐个传参）
+### 3.1 最简实现（只支持逐个传参）
 
 ```javascript
 function curry(fn) {
   return function curried(arg) {
-    // 只有一个参数时直接执行
     if (fn.length === 1) return fn(arg);
-    // 否则返回新函数继续收集
     return curry(fn.bind(null, arg));
   };
 }
-
-// 问题：只支持 f(1)(2)(3)，不支持 f(1, 2)(3)
 ```
 
-### 版本 2：支持多参数收集
+只支持 `f(1)(2)(3)`，不支持 `f(1, 2)(3)`。用 `fn.bind(null, arg)` 预填参数，但每次只能处理一个参数。
+
+### 3.2 支持多参数收集
 
 ```javascript
 function curry(fn) {
   return function curried(...args) {
     if (args.length >= fn.length) {
-      // 参数够了 → 执行
       return fn(...args);
     }
-    // 参数不够 → 返回新函数继续收集
     return function (...nextArgs) {
       return curried(...args, ...nextArgs);
     };
   };
 }
-
-// ✓ 支持 f(1)(2)(3)
-// ✓ 支持 f(1, 2)(3)
-// ✓ 支持 f(1)(2, 3)
 ```
 
-### 版本 3：完整实现（保持 this 上下文 + 零参数处理）
+用 `...args` 收集每次传入的所有参数。参数够了就执行，不够就返回新函数继续收集，合并已有参数和新参数。支持 `f(1)(2)(3)`、`f(1, 2)(3)`、`f(1)(2, 3)` 等任意组合。
+
+### 3.3 完整实现（保持 this 上下文 + 零参数处理）
 
 ```javascript
 function curry(fn) {
-  // 零参数函数直接返回，避免无意义包装
   if (fn.length === 0) return fn;
 
   return function curried(...args) {
-    // 用闭包捕获 this，确保链式调用保持上下文
     const context = this;
 
     if (args.length >= fn.length) {
@@ -113,11 +109,13 @@ function curry(fn) {
     };
   };
 }
-
-// ✓ 保持 this 上下文（链式调用也正确）
-// ✓ 支持任意参数组合
-// ✓ 处理边界情况（零参数、多余参数）
 ```
+
+**`if (fn.length === 0) return fn`** — 零参数函数直接返回，避免无意义包装。
+
+**`const context = this`** — 在 `curried` 入口捕获 `this`，后续用 `context` 替代 `this`。这确保链式调用中 `this` 不丢失：`curriedObjAdd.call(obj, 5)(3)` 中，第二次调用 `(3)` 的 `this` 不再是 `obj`，但闭包中的 `context` 仍然是。
+
+**`fn.apply(context, args)`** — 使用 `apply` 而非 `fn(...args)`，以便正确传递 `this` 上下文。
 
 ### 执行过程演示
 
@@ -142,15 +140,13 @@ function curry(fn) {
 
 ## 第四步：常见变体
 
-### 变体 1：Lodash 风格的 curry（支持占位符）
+### Lodash 风格的 curry（支持占位符）
 
 ```javascript
-// 使用 Symbol 作为占位符，避免与实际参数值冲突
 const CURRY_PLACEHOLDER = Symbol('curry.placeholder');
 
 function curry(fn, placeholder = CURRY_PLACEHOLDER) {
   return function curried(...args) {
-    // 检查是否所有非占位符参数都已填满
     const isComplete = args.length >= fn.length &&
       args.slice(0, fn.length).every(arg => arg !== placeholder);
 
@@ -160,14 +156,12 @@ function curry(fn, placeholder = CURRY_PLACEHOLDER) {
       const merged = [...args];
       let nextIdx = 0;
 
-      // 先填充占位符
       for (let i = 0; i < merged.length && nextIdx < nextArgs.length; i++) {
         if (merged[i] === placeholder) {
           merged[i] = nextArgs[nextIdx++];
         }
       }
 
-      // 再追加剩余参数
       while (nextIdx < nextArgs.length) {
         merged.push(nextArgs[nextIdx++]);
       }
@@ -176,141 +170,65 @@ function curry(fn, placeholder = CURRY_PLACEHOLDER) {
     };
   };
 }
-
-// 用法：curry(add)(CURRY_PLACEHOLDER, 2)(1)(3) → 6
 ```
 
-> **为什么用 Symbol 而非字符串 `'_'`？** 字符串可能与实际参数值冲突（如用户真的传入 `'_'` 作为参数），Symbol 保证唯一性。
-
-### 变体 2：自动柯里化装饰器
-
-```javascript
-function autoCurry(fn) {
-  // 如果参数已经够了，直接执行
-  if (fn.length <= 1) return fn;
-  return curry(fn);
-}
-
-// 批量柯里化工具函数
-function createUtils(obj) {
-  return Object.fromEntries(
-    Object.entries(obj).map(([key, fn]) => [key, curry(fn)])
-  );
-}
-```
-
-### 变体 3：无限柯里化（空调用触发执行）
-
-```javascript
-function curryLoose(fn) {
-  return function curried(...args) {
-    // 返回新函数继续收集，用空调用 () 作为结束信号
-    return function (...nextArgs) {
-      if (nextArgs.length === 0) return fn(...args);
-      return curried(...args, ...nextArgs);
-    };
-  };
-}
-
-// 用法：curryLoose(add)(1)(2)(3)() → 6
-// 注意：需要空调用 () 触发执行，而非"参数不够也执行"
-```
+用 `Symbol` 而非字符串 `'_'` 作为占位符，避免与实际参数值冲突。占位符允许跳过某个参数稍后填充：`curry(add)(PLACEHOLDER, 2)(1)(3)` → `6`。
 
 ---
 
-## 第五步：复杂度分析
+## 第五步：易错点
 
-| 指标 | 复杂度 | 说明 |
-|------|--------|------|
-| 时间 | O(k) | k 为调用次数，每次调用合并参数数组 |
-| 空间 | O(k) | 每次调用闭包捕获当前参数数组 |
-
-其中 k ≤ n（n 为原函数形参数量），实际使用中 k 通常很小，性能不是问题。
-
----
-
-## 第六步：易错点
-
-### ❌ 易错点 1：忘记 `...args` 收集参数
+### ❌ 用闭包变量而非函数参数收集参数
 
 ```javascript
-// 错误：用单个变量存参数，无法处理多参数传入
-function curry(fn) {
-  let args = [];       // ← 这样每次调用都会重置
-  return function (arg) {
-    args.push(arg);
-    if (args.length >= fn.length) return fn(...args);
-    return this;       // ← 返回 this 而非新函数
-  };
-}
-```
-
-**正确做法**：用 `...args` 作为函数参数，利用递归天然传递。
-
-### ❌ 易错点 2：用闭包变量而非函数参数
-
-```javascript
-// 错误：闭包变量在外层共享，多次调用会互相污染
 function curry(fn) {
   const collected = [];
   return function curried(...args) {
-    collected.push(...args);        // ← 污染！
+    collected.push(...args);
     if (collected.length >= fn.length) {
       const result = fn(...collected);
-      collected.length = 0;         // ← 手动清空，脆弱
+      collected.length = 0;
       return result;
     }
     return curried;
   };
 }
-
-const add1 = curry(add);
-const add2 = curry(add);
-add1(1)(2);
-add2(10);    // ← collected 里可能是 [1, 2, 10]！
 ```
 
-**正确做法**：参数通过函数参数 `...args` 传递，每次递归合并新旧参数，无共享状态。
+❌ 错误原因：闭包变量 `collected` 在外层共享，多次调用会互相污染。`curry(add)` 返回的 `curried` 共享同一个 `collected` 数组。`add1(1)(2)` 后 `add2(10)` 会污染。**正确做法**：参数通过函数参数 `...args` 传递，每次递归合并新旧参数，无共享状态。
 
-### ❌ 易错点 3：链式调用丢失 `this` 上下文
+### ❌ 链式调用丢失 this 上下文
 
 ```javascript
-// 问题：返回的内部函数用 this 而非闭包捕获的 context
 function curry(fn) {
   return function curried(...args) {
     if (args.length >= fn.length) {
-      return fn.apply(this, args);  // ← this 在链式调用时丢失
+      return fn.apply(this, args);
     }
     return function (...nextArgs) {
-      return curried.apply(this, [...args, ...nextArgs]);  // ← this 是调用时的值
+      return curried.apply(this, [...args, ...nextArgs]);
     };
   };
 }
 ```
 
-**正确做法**：用 `const context = this` 在 `curried` 入口捕获上下文，后续用 `context` 替代 `this`。
+❌ 错误原因：返回的内部函数用 `this` 而非闭包捕获的 `context`。第二次调用时 `this` 是调用时的值（可能是 `undefined`），而非第一次调用时的 `this`。**正确做法**：用 `const context = this` 在入口捕获。
 
-### ❌ 易错点 4：混淆柯里化与部分应用
+### ❌ 混淆柯里化与部分应用
 
 ```javascript
-// 部分应用 (Partial Application)：固定部分参数，一次性调用
 function partial(fn, ...presetArgs) {
   return function (...laterArgs) {
     return fn(...presetArgs, ...laterArgs);
   };
 }
-
-// 柯里化 (Currying)：每次调用返回新函数，直到参数够
-// curry(add)(1)(2)(3)   ← 柯里化
-// partial(add, 1, 2)(3) ← 部分应用
 ```
 
-### ✅ 面试加分项
+上面是**部分应用（Partial Application）**：固定部分参数，一次性调用。
 
-1. **手写时先画流程图**，展示你理解递归收集的过程
-2. **主动提到闭包陷阱**（共享状态问题），展示深度理解
-3. **能区分柯里化和部分应用**，说明两者的适用场景
-4. **提到实际应用**：React hooks、中间件、事件绑定等
-5. **能写出 Lodash 风格的占位符版本**，说明你了解高级用法
-6. **主动处理 `this` 上下文**，用闭包捕获 context 而非依赖调用时的 this
-7. **处理零参数函数边界**，展示对 `Function.length` 的深入理解
+```javascript
+curry(add)(1)(2)(3)
+partial(add, 1, 2)(3)
+```
+
+柯里化是"每次一个（或多个）参数，逐步收集"；部分应用是"一次固定部分参数，返回新函数"。

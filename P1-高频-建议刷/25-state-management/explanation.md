@@ -6,10 +6,6 @@
 
 Redux 的第一个原则是**单一数据源**：整个应用的状态存储在一个对象树中（`currentState`），由一个 store 统一管理。
 
-```javascript
-let currentState = initialState;
-```
-
 为什么强调"单一"？
 - **可预测性**：所有状态集中一处，便于调试和时间旅行
 - **数据一致性**：避免多个状态源导致的数据不同步
@@ -24,14 +20,8 @@ let currentState = initialState;
 reducer 是一个**纯函数**：`(state, action) => newState`。关键约定是**不可变更新**——必须返回新对象，不能修改原 state。
 
 ```javascript
-// ✅ 正确：展开运算符创建新对象
 case 'INCREMENT':
   return { ...state, count: state.count + 1 };
-
-// ❌ 错误：直接修改原对象
-case 'INCREMENT':
-  state.count += 1;
-  return state;
 ```
 
 为什么不可变？
@@ -41,110 +31,156 @@ case 'INCREMENT':
 
 初始化时 `dispatch({ type: '@@INIT' })` 触发 reducer 返回默认 state，这是 Redux 的惯用手法。
 
-> **为什么 action 必须是普通对象？** 普通对象可序列化、可预测、可被中间件拦截和记录。如果允许函数或 Symbol 等特殊类型，中间件的日志记录、时间旅行调试、序列化存储等机制将失效。Redux 的 thunk 中间件正是通过拦截函数类型的 action 来"绕过"这一限制的。
-
 ---
 
-## 第三步：订阅发布 —— 响应状态变化
+## 第三步：逐步实现
 
-subscribe 实现了经典的**观察者模式**：
+### 3.1 createStore 核心
 
 ```javascript
-function subscribe(listener) {
-  // 类型校验：必须是函数
-  if (typeof listener !== 'function') {
-    throw new Error('Expected the listener to be a function');
+function createStore(reducer, initialState) {
+  let currentState = initialState;
+  let listeners = [];
+  let isDispatching = false;
+
+  function getState() {
+    if (isDispatching) {
+      throw new Error('Reducers may not dispatch actions or read state');
+    }
+    return currentState;
   }
 
-  // 去重：同一引用不重复注册
-  if (listeners.includes(listener)) {
-    return () => {}; // 已注册则返回空函数
+  function subscribe(listener) {
+    if (typeof listener !== 'function') {
+      throw new Error('Expected the listener to be a function');
+    }
+    if (listeners.includes(listener)) {
+      return () => {};
+    }
+    listeners.push(listener);
+    let isSubscribed = true;
+    return function unsubscribe() {
+      if (!isSubscribed) return;
+      isSubscribed = false;
+      const index = listeners.indexOf(listener);
+      if (index > -1) listeners.splice(index, 1);
+    };
   }
 
-  listeners.push(listener);
+  function dispatch(action) {
+    if (typeof action !== 'object' || action === null) {
+      throw new Error('Actions must be plain objects');
+    }
+    if (typeof action.type === 'undefined') {
+      throw new Error('Actions may not have an undefined "type" property');
+    }
+    if (isDispatching) {
+      throw new Error('Reducers may not dispatch actions');
+    }
+    try {
+      isDispatching = true;
+      currentState = reducer(currentState, action);
+    } finally {
+      isDispatching = false;
+    }
+    const currentListeners = listeners.slice();
+    for (let i = 0; i < currentListeners.length; i++) {
+      currentListeners[i]();
+    }
+    return action;
+  }
 
-  // 返回 unsubscribe 函数（闭包机制）
-  let isSubscribed = true;
-  return function unsubscribe() {
-    if (!isSubscribed) return;
-    isSubscribed = false;
-    const index = listeners.indexOf(listener);
-    if (index > -1) listeners.splice(index, 1);
+  dispatch({ type: '@@INIT' });
+
+  return { getState, dispatch, subscribe };
+}
+```
+
+**`isDispatching` 标志**：reducer 执行期间设置为 `true`，禁止嵌套 dispatch 和读取 state，保证数据一致性。
+
+**`listeners.slice()` 快照**：通知订阅者前先快照当前列表，防止订阅者回调内增删 listener 导致遍历异常。
+
+**`@@INIT` 初始化**：store 创建时自动 dispatch，触发 reducer 返回默认 state。
+
+**subscribe 返回 unsubscribe 函数**：闭包机制捕获 listener 引用，调用者无需记住索引。`isSubscribed` 标志防止重复取消。
+
+### 3.2 compose — 函数组合
+
+```javascript
+function compose(...funcs) {
+  if (funcs.length === 0) return (arg) => arg;
+  if (funcs.length === 1) return funcs[0];
+
+  return funcs.reduce(
+    (a, b) =>
+      (...args) =>
+        a(b(...args))
+  );
+}
+```
+
+`compose(f, g, h)` 等价于 `(...args) => f(g(h(...args)))`，从右到左组合。这是中间件洋葱模型的基础。
+
+### 3.3 applyMiddleware — 中间件机制
+
+```javascript
+function applyMiddleware(...middlewares) {
+  return function (createStoreFn) {
+    return function (reducer, initialState) {
+      const store = createStoreFn(reducer, initialState);
+
+      let dispatch = () => {
+        throw new Error('Dispatching while constructing your middleware is not allowed');
+      };
+
+      const middlewareAPI = {
+        getState: store.getState,
+        dispatch: (action, ...args) => dispatch(action, ...args),
+      };
+
+      const chain = middlewares.map((middleware) => middleware(middlewareAPI));
+      dispatch = compose(...chain)(store.dispatch);
+
+      return { ...store, dispatch };
+    };
   };
 }
 ```
 
-关键设计点：
-1. **闭包返回 unsubscribe**：调用者无需记住自己的索引，闭包自动捕获 listener 引用
-2. **防重复取消**：`isSubscribed` 标志防止 splice 出错
-3. **快照通知**：dispatch 时用 `listeners.slice()` 快照当前列表，避免订阅者内增删导致遍历异常
-4. **去重注册**：同一个 listener 引用不重复添加
+**中间件签名**：`store => next => action => { ... }`。每个中间件接收 store API，返回一个包装 dispatch 的函数。
+
+**占位 dispatch**：先用抛异常的占位函数，避免中间件构造期间调用 dispatch。等中间件组合完成后才赋值真实 dispatch。
+
+**洋葱模型**：`compose(A, B, C)(store.dispatch)` 形成 `A → B → C → 原始 dispatch` 的调用链，每个中间件可以在 `next(action)` 前后插入逻辑。
 
 ---
 
-## 第四步：applyMiddleware —— 洋葱模型与函数组合
+## 第四步：常见追问
 
-中间件是 Redux 最精妙的设计。中间件签名：
+**Q: 如何实现 combineReducers？**
 
-```javascript
-store => next => action => { /* 前置逻辑 */ const result = next(action); /* 后置逻辑 */ return result; }
-```
+将多个 reducer 拆分合并，每个管理 state 树的一个分支。dispatch 时遍历所有 reducer，各自更新自己负责的子状态。
 
-**理解洋葱模型**：
+**Q: Redux Toolkit 如何简化？**
 
-假设中间件链为 `[A, B, C]`，原始 dispatch 为 `D`，则组合后：
+使用 Immer 实现"看起来可变、实际不可变"的简化写法，开发者直接 `state.count++`，Immer 内部处理不可变更新。
 
-```
-dispatch(action)
-  → A 接收 action
-    → B 接收 action
-      → C 接收 action
-        → D(action) 真正执行 reducer
-      → C 后置逻辑
-    → B 后置逻辑
-  → A 后置逻辑
-```
+**Q: 中间件的执行顺序？**
 
-**compose 函数**是实现的关键：
+`applyMiddleware(a, b, c)` 按 a → b → c 的顺序增强 dispatch。dispatch 时 action 先经过 a，再经过 b，最后经过 c。
 
-```javascript
-function compose(...funcs) {
-  if (funcs.length === 0) return (arg) => arg; // 空组合：恒等函数
-  if (funcs.length === 1) return funcs[0];     // 单函数：直接返回
+**Q: action 为什么必须是普通对象？**
 
-  return funcs.reduce((a, b) => (...args) => a(b(...args)));
-}
-```
-
-`compose(A, B, C)` 等价于 `(...args) => A(B(C(...args)))`，从右到左组合。
-
-**middlewareAPI 的陷阱**：先用占位 dispatch 避免循环依赖，等中间件组合完成后再赋值真实 dispatch。
+普通对象可序列化、可预测、可被中间件拦截和记录。Redux 的 thunk 中间件通过拦截函数类型的 action 来"绕过"这一限制。
 
 ---
 
-## 第五步：实际应用与进阶思考
+## 第五步：易错点
 
-### 常见中间件
-
-| 中间件 | 作用 |
-|--------|------|
-| **logger** | 打印 action 和 state 变化，开发调试 |
-| **thunk** | 支持 dispatch 函数，实现异步操作 |
-| **promise** | 支持 dispatch Promise，自动 resolve |
-| **redux-saga** | 用 Generator/async 管理副作用 |
-
-### 与现代方案对比
-
-| 特性 | Redux | Zustand | Pinia |
-|------|-------|---------|-------|
-| 模板代码 | 多（action/reducer） | 极少 | 少 |
-| 不可变更新 | 必须 | 内部处理 | 响应式 |
-| 中间件 | 完善 | 中间件/插件 | 插件 |
-| 学习曲线 | 陡 | 平缓 | 平缓 |
-
-### 面试加分点
-
-1. **时间旅行调试**的原理：保存 state 快照数组 + 重放 action
-2. **combineReducers**：将多个 reducer 拆分合并，每个管理 state 树的一个分支
-3. **Redux Toolkit (RTK)**：Immer 实现"看起来可变、实际不可变"的简化写法
-4. **发布订阅的变体**：RxJS 的 Observable 模式、MobX 的响应式追踪
+| 易错点 | 说明 |
+|-------|------|
+| reducer 直接修改原 state | 必须返回新对象，用展开运算符或 `Object.assign` |
+| subscribe 不返回 unsubscribe | 调用者无法取消订阅，导致内存泄漏 |
+| dispatch 时通知订阅者不快照 | 订阅者内增删 listener 会导致遍历异常 |
+| 中间件占位 dispatch 未替换 | 中间件组合完成后必须赋值真实 dispatch |
+| 忘记 `@@INIT` 初始化 | reducer 的 default 分支不会被触发，初始状态为 undefined |

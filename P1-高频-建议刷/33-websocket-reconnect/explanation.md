@@ -1,133 +1,242 @@
-# 33 - WebSocket 自动重连 + 心跳 - 五步讲解
+# 33 - WebSocket 自动重连 + 心跳 - 讲解
 
-## 第一步：理解问题本质
+## 第一步：理解问题
 
-裸 `WebSocket` API 极其简单——只有四个事件回调（`onopen`、`onclose`、`onerror`、`onmessage`），**没有任何内置的重连或保活机制**。在生产环境中，WebSocket 连接随时可能因为以下原因断开：
+裸 `WebSocket` API 极其简单——只有四个事件回调（`onopen`、`onclose`、`onerror`、`onmessage`），**没有任何内置的重连或保活机制**。在生产环境中，连接随时可能因为网络切换、服务端重启、NAT 超时等原因断开。
 
-- **网络切换**：WiFi ↔ 4G、进入电梯
-- **服务端重启**：部署更新、进程崩溃
-- **NAT/防火墙超时**：运营商网关回收空闲连接（通常 60-120s）
-- **浏览器后台挂起**：移动端浏览器切到后台，定时器被节流
-
-所以需要封装一个 `ReconnectWebSocket` 类，补齐三个关键能力：**自动重连**、**心跳保活**、**消息缓存**。
+需要封装一个 `ReconnectWebSocket` 类，补齐三个关键能力：**自动重连**、**心跳保活**、**消息缓存**。
 
 ---
 
-## 第二步：指数退避重连策略
+## 第二步：核心思路
 
-**核心思想**：重连失败后，每次等待时间翻倍，避免在网络恢复前疯狂重试（"惊群效应"）。
+整体架构分三个模块：
 
-```
-第 1 次：等 1s
-第 2 次：等 2s
-第 3 次：等 4s
-第 4 次：等 8s
-第 5 次：等 16s
-...以此类推，直到达到上限
-```
+1. **指数退避重连** — 重连失败后等待时间翻倍（1s → 2s → 4s → ...），避免疯狂重试
+2. **心跳检测** — 定期发送 ping，超时未收到 pong 则判定连接已死，主动断开触发重连
+3. **消息队列** — 断线期间 `send()` 的消息缓存到队列，连接恢复后按序发送
 
-**实现要点**：
+关键状态管理：
 
-1. **计算公式**：`delay = min(initialInterval × 2^retryCount, maxInterval)`
-   - 用 `Math.pow(2, retryCount)` 实现指数增长
-   - 用 `Math.min()` 限制上限，避免等待过久（如超过 30s）
+| 状态 | 作用 |
+|------|------|
+| `isManualClose` | 区分主动断开和意外断开，只有意外断开才重连 |
+| `retryCount` | 记录重试次数，连接成功后归零 |
+| `messageQueue` | 断线期间的消息缓存 |
+| `isConnectedOnce` | 区分首次连接和重连，用于触发 `onreconnected` |
 
-2. **重置机制**：连接成功后将 `retryCount` 归零，下次断开从 1s 重新开始
+---
 
-3. **上限控制**：必须有 `maxRetries`，达到上限后停止重连，避免无限循环
+## 第三步：逐步实现
 
-4. **手动关闭标记**：`isManualClose` 区分主动断开和意外断开——只有意外断开才触发重连
+### 3.1 构造函数与状态初始化
 
 ```javascript
-// 关键代码逻辑
-const delay = Math.min(
-  this.reconnectInterval * Math.pow(2, this.retryCount),
-  this.maxReconnectInterval
-);
-setTimeout(() => {
-  this.retryCount++;
+constructor(url, options = {}) {
+  this.url = url;
+  this.maxRetries = options.maxRetries ?? 10;
+  this.heartbeatInterval = options.heartbeatInterval ?? 30000;
+  this.heartbeatTimeout = options.heartbeatTimeout ?? 5000;
+  this.reconnectInterval = options.reconnectInterval ?? 1000;
+  this.maxReconnectInterval = options.maxReconnectInterval ?? 30000;
+
+  this.ws = null;
+  this.retryCount = 0;
+  this.reconnectTimer = null;
+  this.heartbeatTimer = null;
+  this.pongTimer = null;
+  this.isManualClose = false;
+  this.messageQueue = [];
+  this.maxQueueSize = options.maxQueueSize ?? 1000;
+  this.isConnectedOnce = false;
+
+  this.onopen = null;
+  this.onmessage = null;
+  this.onclose = null;
+  this.onerror = null;
+  this.onreconnecting = null;
+  this.onreconnected = null;
+  this.onmaxretries = null;
+
   this._connect();
-}, delay);
+}
 ```
 
----
+所有配置项用 `??` 提供默认值。构造时立即发起首次连接。
 
-## 第三步：心跳检测机制
+### 3.2 建立连接与事件绑定
 
-**为什么需要心跳？**
+```javascript
+_connect() {
+  this._clearTimers();
 
-TCP 连接本身有 Keep-Alive，但：
-- 浏览器的 WebSocket **无法控制 TCP Keep-Alive 参数**
-- 中间代理/NAT 可能在 60-120s 无数据后回收连接
-- 应用层心跳是唯一可靠的检测手段
+  try {
+    this.ws = new WebSocket(this.url);
+  } catch (err) {
+    this._scheduleReconnect();
+    return;
+  }
 
-**Ping/Pong 流程**：
+  this.ws.onopen = () => {
+    const isReconnect = this.isConnectedOnce;
+    this.isConnectedOnce = true;
+    this.retryCount = 0;
+    this.isManualClose = false;
 
+    this._startHeartbeat();
+    this._flushQueue();
+
+    if (this.onopen) this.onopen();
+    if (isReconnect && this.onreconnected) this.onreconnected();
+  };
 ```
-客户端 → 服务端: "ping"        (每 30s 发一次)
-服务端 → 客户端: "pong"        (收到 ping 后回复)
-客户端收到 pong → 清除超时计时器
 
-如果 5s 内没收到 pong → 判定连接已死 → 主动 close → 触发重连
+**`_clearTimers()`**：每次连接前清理上一次的残留定时器，防止内存泄漏。
+
+**`isReconnect`**：在重置 `isConnectedOnce` 之前记录，用于区分首次连接和重连。只有重连时才触发 `onreconnected`。
+
+**`retryCount = 0`**：连接成功后重置重试计数，下次断开从 1s 重新开始退避。
+
+### 3.3 消息接收与心跳响应
+
+```javascript
+  this.ws.onmessage = (event) => {
+    if (event.data === 'pong') {
+      this._resetPongTimer();
+      return;
+    }
+    if (this.onmessage) this.onmessage(event.data);
+  };
 ```
 
-**实现要点**：
+收到 `pong` 时清除超时计时器，不传递给外部回调。普通消息交给 `onmessage`。
 
-1. 用 `setInterval` 定期发送 ping
-2. 发送 ping 的同时启动 `setTimeout`（如 5s）作为 pong 超时计时器
-3. 收到 pong 时 `clearTimeout` 重置计时器
-4. 超时未收到 pong → `ws.close()` 主动断开 → `onclose` 触发重连
+### 3.4 连接关闭与重连调度
 
-**注意**：心跳消息格式需要和服务端约定。本题简化为文本 `"ping"` / `"pong"`，实际项目中可能是 JSON 或二进制帧。
+```javascript
+  this.ws.onclose = (event) => {
+    this._clearTimers();
+    if (this.onclose) this.onclose(event.code, event.reason);
+    if (!this.isManualClose) {
+      this._scheduleReconnect();
+    }
+  };
+}
+```
 
----
+**`!this.isManualClose`**：只有非手动关闭时才触发重连。这是区分"主动断开"和"意外断开"的核心机制。
 
-## 第四步：消息缓存队列
-
-**场景**：用户在断线期间调用 `send()`，消息不能丢。
+### 3.5 发送消息与队列缓存
 
 ```javascript
 send(data) {
   if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-    this.ws.send(data);           // 连接正常 → 直接发
+    this.ws.send(data);
   } else {
-    this.messageQueue.push(data); // 连接断开 → 入队缓存
+    if (this.messageQueue.length >= this.maxQueueSize) {
+      this.messageQueue.shift();
+    }
+    this.messageQueue.push(data);
   }
 }
 ```
 
-**关键决策**：
+连接正常直接发送；否则入队缓存。队列满时丢弃最早消息，防止内存溢出。
 
-1. **队列还是丢弃？** 大多数场景选队列（保证消息不丢），但实时性极强的场景（如游戏帧同步）可能选择丢弃旧消息
-2. **队列上限？** 已实现 `maxQueueSize`（默认 1000），超出时丢弃最早消息，防止内存溢出
-3. **何时发送？** 在 `onopen` 回调中按序 `flush`，保证消息顺序
+### 3.6 指数退避重连
+
+```javascript
+_scheduleReconnect() {
+  if (this.retryCount >= this.maxRetries) {
+    if (this.onmaxretries) this.onmaxretries({ retryCount: this.retryCount });
+    return;
+  }
+
+  const delay = Math.min(
+    this.reconnectInterval * Math.pow(2, this.retryCount),
+    this.maxReconnectInterval
+  );
+
+  if (this.onreconnecting) {
+    this.onreconnecting({ retryCount: this.retryCount + 1, delay });
+  }
+
+  this.reconnectTimer = setTimeout(() => {
+    this.retryCount++;
+    this._connect();
+  }, delay);
+}
+```
+
+**`Math.pow(2, retryCount)`**：指数退避的核心公式。第 1 次等 1s，第 2 次等 2s，第 3 次等 4s...
+
+**`Math.min(..., maxReconnectInterval)`**：限制上限，避免等待过久。
+
+### 3.7 心跳检测
+
+```javascript
+_startHeartbeat() {
+  this._clearHeartbeatTimers();
+
+  this.heartbeatTimer = setInterval(() => {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send('ping');
+
+      this.pongTimer = setTimeout(() => {
+        this.ws.close();
+      }, this.heartbeatTimeout);
+    }
+  }, this.heartbeatInterval);
+}
+```
+
+每 `heartbeatInterval` 发送一次 `ping`，同时启动 `heartbeatTimeout` 超时计时器。超时未收到 `pong` 则主动 `close()`，触发 `onclose` → 自动重连。
+
+收到 `pong` 时通过 `_resetPongTimer()` 清除超时计时器。
+
+### 3.8 手动关闭
+
+```javascript
+close() {
+  this.isManualClose = true;
+  this._clearTimers();
+  if (this.ws) {
+    this.ws.close();
+  }
+}
+```
+
+设置 `isManualClose = true`，这样 `onclose` 中不会触发重连。
 
 ---
 
-## 第五步：状态管理与边界条件
+## 第四步：常见追问
 
-一个生产级实现需要处理大量边界条件：
+### Q1：为什么用指数退避而不是固定间隔？
 
-| 场景 | 处理方式 |
-|------|----------|
-| 手动 `close()` 后不重连 | `isManualClose` 标记，在 `onclose` 中判断 |
-| 重连期间再次断开 | 清理旧的重连定时器，重新调度 |
-| `maxRetries` 用尽 | 停止重连，触发 `onmaxretries` 回调 |
-| WebSocket 构造函数抛异常 | `try-catch` 包裹，走重连逻辑 |
-| 页面卸载时清理 | `beforeunload` 事件中调用 `close()` |
-| 心跳定时器泄漏 | 每次 `_connect()` 前清理所有定时器 |
-| 查询连接状态 | `readyState` getter 兼容 WebSocket 原生常量 |
-| 手动关闭后重连 | 重连成功时自动重置 `isManualClose` 标记 |
+固定间隔在网络未恢复时会产生大量无效请求（惊群效应）。指数退避让重试频率逐渐降低，给网络恢复留出时间。
 
-**设计原则**：
+### Q2：心跳消息格式需要和服务端约定吗？
 
-- **防御式编程**：所有外部输入（URL、回调）都要有兜底
-- **单一职责**：重连、心跳、队列各自独立管理
-- **可观测性**：提供 `onreconnecting`、`onreconnected` 等事件，让调用方知道当前状态
+是的。本题简化为文本 `"ping"` / `"pong"`，实际项目中可能是 JSON、二进制帧或 WebSocket 协议层的 Ping/Pong 帧。
 
-### 面试追问方向
+### Q3：如何处理 WebSocket 构造函数抛异常？
 
-- 如何实现心跳消息的自定义格式（JSON/二进制）？
-- 如何处理 WebSocket 连接成功但服务端实际不可用的情况？
-- 多标签页场景下如何避免重复连接？
-- 如何结合 `navigator.onLine` 优化重连策略？
+URL 格式错误等极端情况用 `try/catch` 包裹，捕获后走重连逻辑。
+
+### Q4：多标签页场景下如何避免重复连接？
+
+可以用 `BroadcastChannel` 或 `localStorage` 事件协调，同一时间只有一个标签页持有连接。
+
+---
+
+## 第五步：易错点
+
+| 易错点 | 说明 |
+|-------|------|
+| 忘记区分手动关闭和意外断开 | `close()` 后不应重连 |
+| 心跳定时器泄漏 | 每次 `_connect()` 前必须清理所有定时器 |
+| 重连成功后不重置 retryCount | 否则退避间隔会越来越大 |
+| pong 超时不主动断开 | 需要 `ws.close()` 触发 `onclose` 才能重连 |
+| 消息队列无上限 | 可能导致内存溢出，必须设置 `maxQueueSize` |
+| 不处理 WebSocket 构造函数异常 | `new WebSocket('invalid')` 会抛错 |

@@ -5,20 +5,24 @@
 **核心问题**：`Promise.all(tasks.map(fn))` 是并发执行的，无法保证顺序。
 
 ```
-// ❌ 并发：三个请求同时发出，谁先回来不确定
+❌ 并发：三个请求同时发出，谁先回来不确定
 Promise.all([fetch('/a'), fetch('/b'), fetch('/c')])
 
-// ✅ 串行：a 完成后才发 b，b 完成后才发 c
+✅ 串行：a 完成后才发 b，b 完成后才发 c
 serial([() => fetch('/a'), () => fetch('/b'), () => fetch('/c')])
 ```
 
 **为什么 tasks 是函数数组而非 Promise 数组？**
 
-```javascript
-// ❌ 错误：传入时 Promise 就已经开始执行了，无法控制顺序
-const tasks = [fetch('/a'), fetch('/b'), fetch('/c')]; // 立即并发！
+❌ 错误：传入时 Promise 就已经开始执行了，无法控制顺序
 
-// ✅ 正确：传入函数，调用时才创建 Promise，执行时机可控
+```
+const tasks = [fetch('/a'), fetch('/b'), fetch('/c')];
+```
+
+✅ 正确：传入函数，调用时才创建 Promise，执行时机可控
+
+```
 const tasks = [() => fetch('/a'), () => fetch('/b'), () => fetch('/c')];
 ```
 
@@ -55,63 +59,57 @@ tasks.reduce((chain, task) => ..., Promise.resolve([]))
 
 ---
 
-## 第三步：逐行解析代码
+## 第三步：逐步实现
+
+### 3.1 serial（基础版）
 
 ```javascript
 function serial(tasks) {
   return tasks.reduce(
     (chain, task) => {
       return chain.then((results) => {
-        // ↑ 此时前序任务已完成，results 是已收集的结果数组
-
-        return task().then((result) => {
-          // ↑ task() 返回 Promise，.then() 拿到它的结果
-          //   注意：必须 return 这个 Promise，否则链会断裂
-
-          return [...results, result];
-          // ↑ 返回新数组（追加当前结果），作为下一个 .then() 的 results
-        });
+        return task().then((result) => [...results, result]);
       });
     },
-    Promise.resolve([]) // 链的起点：一个已 resolve 的 Promise，值为 []
+    Promise.resolve([])
   );
 }
 ```
 
-**关键细节**：
-- `task()` 而非 `task`：调用函数才创建 Promise
-- `return task().then(...)`：必须 return，否则 `.then()` 会立即 resolve，不等任务完成
-- `[...results, result]`：不可变写法，每次生成新数组（面试中可讨论优化）
+**`chain.then((results) => ...)`**：此时前序任务已完成，`results` 是已收集的结果数组。
 
----
+**`task().then((result) => ...)`**：调用函数创建 Promise，`.then()` 拿到它的结果。必须 `return` 这个 Promise，否则链会断裂——`.then()` 会立即 resolve，不等任务完成。
 
-## （进阶）面试加分项：可变数组 vs 不可变数组优化
+**`[...results, result]`**：不可变写法，每次生成新数组（追加当前结果），作为下一个 `.then()` 的 `results`。
 
-> 💡 **补充说明**：上面第二步和第三步是本题的核心——理解 `reduce` 如何串联 Promise 链。以下内容属于**可选的性能优化讨论**，面试中能提到是加分项，但不是必须掌握的核心步骤。
+**`Promise.resolve([])`**：链的起点。reduce 的累加器 `chain` 在第一轮就需要调用 `.then()`，如果初始值是普通数组 `[]`，`[].then(...)` 会报错。必须用 `Promise.resolve([])` 确保累加器始终是 Promise。
 
-**基础版（不可变）**：每次 `[...results, result]` 创建新数组
-- 优点：纯函数风格，无副作用
-- 缺点：O(n²) 的数组拷贝开销
-
-**优化版（可变）**：用外部 `results` 数组 + `push`
+### 3.2 serialOptimized（优化版）
 
 ```javascript
 function serialOptimized(tasks) {
-  const results = [];  // 外部可变数组
+  const results = [];
 
   return tasks
     .reduce((chain, task) => {
       return chain.then(() => {
         return task().then((result) => {
-          results.push(result);  // 直接 push，O(1)
+          results.push(result);
         });
       });
     }, Promise.resolve())
-    .then(() => results);  // 链结束后返回收集的结果
+    .then(() => results);
 }
 ```
 
-**区别**：
+**`const results = []`**：外部可变数组，避免每次 `[...results, result]` 的拷贝开销。
+
+**`results.push(result)`**：直接 push 到外部数组，O(1) 操作，而基础版的 `[...results, result]` 每次都是 O(n) 拷贝，整体退化为 O(n²)。
+
+**`.then(() => results)`**：链结束后才返回收集的结果。因为 `reduce` 的回调不再返回新数组，需要在链尾统一返回。
+
+**两版对比**：
+
 | | 基础版 | 优化版 |
 |---|---|---|
 | 数组操作 | `[...arr, item]` (拷贝) | `arr.push(item)` (原地) |
@@ -120,58 +118,22 @@ function serialOptimized(tasks) {
 | reduce 初始值 | `Promise.resolve([])` | `Promise.resolve()` |
 | 最终返回 | reduce 直接返回结果 | 需额外 `.then(() => results)` |
 
-面试中两个版本都能写，**基础版更简洁优雅，优化版更注重性能**。
-
 ---
 
-## 第五步：常见错误与追问延伸
-
-### 常见错误
-
-**错误 1：忘记 return task() 的 Promise**
-
-```javascript
-// ❌ 错误：没有 return，.then() 立即 resolve，不等任务完成
-chain.then((results) => {
-  task().then((result) => [...results, result]); // 没有 return！
-});
-
-// ✅ 正确：必须 return 内层 Promise
-chain.then((results) => {
-  return task().then((result) => [...results, result]);
-});
-```
-
-**错误 2：reduce 初始值写成 `[]`**
-
-```javascript
-// ❌ 错误：[].then(...) → TypeError: [].then is not a function
-tasks.reduce((chain, task) => chain.then(...), []);
-
-// ✅ 正确：初始值必须是 Promise
-tasks.reduce((chain, task) => chain.then(...), Promise.resolve([]));
-```
-
-**错误 3：传入 Promise 而非函数**
-
-```javascript
-// ❌ 错误：Promise 在传入时就已开始执行，无法控制顺序
-serial([fetch('/a'), fetch('/b'), fetch('/c')]); // 立即并发！
-
-// ✅ 正确：传入函数，调用时才创建 Promise
-serial([() => fetch('/a'), () => fetch('/b'), () => fetch('/c')]);
-```
-
----
+## 第四步：常见追问
 
 ### Q1：如何处理错误？
 
+**方案 A**：任一任务失败则整体 reject（默认行为）
+
 ```javascript
-// 方案 A：任一任务失败则整体 reject（默认行为）
 serial([task1, brokenTask, task3])
   .catch(err => console.error('串行中断:', err));
+```
 
-// 方案 B：收集所有结果（成功/失败），不中断执行
+**方案 B**：收集所有结果（成功/失败），不中断执行
+
+```javascript
 function serialAll(tasks) {
   return tasks.reduce(
     (chain, task) => chain.then((results) =>
@@ -189,17 +151,15 @@ function serialAll(tasks) {
 串行是并发数 = 1 的特例。通用的并发控制需要维护一个"执行池"：
 
 ```javascript
-// 串行 = concurrency(1)
-// Promise.all = concurrency(Infinity)
 function concurrency(tasks, limit = 3) {
-  // 这是更高级的题目，通常用队列 + 计数器实现
 }
 ```
+
+串行等价于 `concurrency(1)`，`Promise.all` 等价于 `concurrency(Infinity)`。内部用队列 + 计数器实现。
 
 ### Q3：async/await 版本对比
 
 ```javascript
-// async/await 版本（更直观，但面试要求 reduce 版本）
 async function serialAsync(tasks) {
   const results = [];
   for (const task of tasks) {
@@ -209,8 +169,20 @@ async function serialAsync(tasks) {
 }
 ```
 
-reduce 版本本质上是把 `for...of + await` 展开成了 `.then()` 链——理解了这层关系，两种写法就能自由切换。
+reduce 版本本质上是把 `for...of + await` 展开成了 `.then()` 链——理解了这层关系，两种写法就能自由切换。面试中通常要求 reduce 版本，但提到 async/await 版本是加分项。
 
 ### Q4：reduce 的初始值为什么是 `Promise.resolve([])` 而非 `[]`？
 
 因为 reduce 的累加器 `chain` 在第一轮就需要调用 `.then()`。如果初始值是普通数组 `[]`，第一轮 `[].then(...)` 会报错——数组没有 `.then()` 方法。必须用 `Promise.resolve([])` 确保累加器始终是 Promise。
+
+---
+
+## 第五步：易错点
+
+| 易错点 | 说明 |
+|-------|------|
+| 忘记 return task() 的 Promise | `.then()` 会立即 resolve，不等任务完成，链断裂 |
+| reduce 初始值写成 `[]` | `[].then(...)` → TypeError |
+| 传入 Promise 而非函数 | Promise 在传入时就已开始执行，无法控制顺序 |
+| 忘记处理空数组 | 空数组 reduce 直接返回初始值，需确保初始值类型正确 |
+| 未处理 reject | 任务 reject 时链会中断，后续任务不执行 |

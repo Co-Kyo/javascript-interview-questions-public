@@ -1,193 +1,222 @@
-# 34 - 模板引擎 详解
+# 34 - 模板引擎 - 讲解
 
-## 五步讲解
+## 第一步：理解问题
 
----
-
-### 第一步：理解核心问题
-
-模板引擎的本质是一个**字符串替换器**。给定模板字符串和数据对象，它需要：
+模板引擎的本质是**字符串替换器**。给定模板字符串和数据对象，需要：
 
 1. 识别模板中的特殊语法（`{{}}`、`{{#if}}`、`{{#each}}`）
 2. 从数据对象中取出对应的值
 3. 将值替换回模板，生成最终字符串
 
-关键难点在于：如何让模板中的 `name` 直接访问 `data.name`，而不是写 `data['name']`？
+关键难点：如何让模板中的 `name` 直接访问 `data.name`？答案是 `with` 语句。
 
 ---
 
-### 第二步：用 `with` 语句建立数据作用域
+## 第二步：核心思路
 
-`with(obj)` 是 JS 中一个被遗忘（且被严格模式禁止）的语句，它做的事情很巧妙：
+整体流程：
 
-```js
-const data = { name: 'World', age: 25 };
-
-with (data) {
-  console.log(name); // 'World' —— 不需要写 data.name
-  console.log(age);  // 25
-}
+```
+模板字符串 → 正则解析 → Token 流 → 代码生成 → new Function 执行 → 最终结果
 ```
 
-**原理**：`with` 会将对象的属性临时注入到当前作用域链中。当你访问 `name` 时，JS 引擎先在局部找，找不到就去 `data` 对象上找。
-
-**嵌套属性也自然支持**：`with(data)` 后访问 `a.b.c` 等价于 `data.a.b.c`，因为 JS 引擎会沿着属性链逐层解析。
-
-**为什么 `with` 被禁止？**
-- 性能问题：引擎无法在编译时确定变量来自哪个作用域，无法优化
-- 可读性差：变量来源不明确，容易出 bug
-- 严格模式下直接报错
-
-但在模板引擎这个场景下，`with` 恰好是最佳选择——我们就是要动态建立作用域。
+- 用 `split(/\{\{(.*?)\}\}/)` 一次调用同时得到文本和表达式
+- 用 `with` 语句建立数据作用域，让模板变量直接访问数据属性
+- 用 `new Function` 而非 `eval` 创建独立函数，避免污染外部作用域
 
 ---
 
-### 第三步：正则解析模板语法
+## 第三步：逐步实现
 
-模板中的三种语法用不同的正则匹配：
+### 3.1 pushLine — 行内变量替换
 
-| 语法 | 正则 | 处理方式 |
-|------|------|----------|
-| `{{var}}` | `/\{\{(.*?)\}\}/g` | 替换为变量值 |
-| `{{#if var}}` | `/\{\{#if\s+(\w+)\}\}/` | 转为 `if(var){` |
-| `{{#each list}}` | `/\{\{#each\s+(\w+)\}\}/` | 转为 `for` 循环 |
-| `{{/if}}` / `{{/each}}` | 固定字符串匹配 | 转为 `}` |
+```javascript
+function pushLine(line, escape) {
+  const parts = line.split(/\{\{(.*?)\}\}/);
+  const codes = [];
 
-**核心正则解析流程**（以 `pushLine` 为例）：
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 0) {
+      const text = parts[i];
+      if (text) {
+        codes.push(`__r.push('${text.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}')`);
+      }
+    } else {
+      const expr = parts[i].trim();
+      let valCode;
 
-```
-输入: "Hello {{name}}, age: {{age}}"
+      if (expr === 'this') {
+        valCode = '__arr[__i]';
+      } else if (expr === '@index') {
+        valCode = '__i';
+      } else if (expr.startsWith('@')) {
+        codes.push("__r.push('')");
+        continue;
+      } else {
+        valCode = `(typeof ${expr}!=='undefined'?${expr}:'')`;
+      }
 
-split(/\{\{(.*?)\}\}/)
-→ ["Hello ", "name", ", age: ", "age", ""]
-
-偶数位(0,2,4) = 普通文本
-奇数位(1,3)   = 表达式
-
-生成代码:
-__r.push('Hello '); __r.push(name); __r.push(', age: '); __r.push(age);
-```
-
-**关键细节**：用 `split` 配合捕获组，一次调用就能同时得到文本和表达式，比手动 `exec` 循环更简洁。
-
----
-
-### 第四步：生成可执行函数
-
-将解析结果拼接成一个完整的函数体。以下是实际生成代码的简化示例：
-
-```js
-// 假设模板: <h1>{{title}}</h1>\n{{#if showList}}\n<ul>\n{{#each items}}\n<li>{{this}}</li>\n{{/each}}\n</ul>\n{{/if}}
-// 实际生成的代码（简化）:
-
-with (__data) {
-  var __r = [];
-  __r.push('<h1>'); __r.push(title); __r.push('</h1>');
-  __r.push('\n');
-  if (showList) {
-    __r.push('<ul>');
-    __r.push('\n');
-    var __arr = items;
-    for (var __i = 0; __i < __arr.length; __i++) {
-      __r.push('<li>'); __r.push(__arr[__i]); __r.push('</li>');
-      __r.push('\n');
+      if (escape) {
+        codes.push(`__r.push(__esc(${valCode}))`);
+      } else {
+        codes.push(`__r.push(${valCode})`);
+      }
     }
-    __r.push('</ul>');
   }
-  return __r.join('');
+
+  return codes.join(';');
 }
 ```
 
-关键点：
-- `{{this}}` 在循环体内被替换为 `__arr[__i]`（当前元素）
-- `{{@index}}` 被替换为 `__i`（当前索引）
-- 普通变量如 `{{title}}` 直接用变量名，靠 `with` 从数据对象中取值
+**`split(/\{\{(.*?)\}\}/)` 配合捕获组**：偶数位是普通文本，奇数位是表达式。比手动 `exec` 循环更简洁。
 
-然后用 `new Function('__data', code)` 创建函数：
+**`{{this}}` → `__arr[__i]`**：循环体内 `this` 指向当前元素，映射为数组下标访问。
 
-```js
-const fn = new Function('__data', code);
-return fn(data); // 执行，传入实际数据
+**`typeof expr !== 'undefined'` 兜底**：变量不存在时输出空字符串，而非 "undefined"。
+
+### 3.2 render — 主函数
+
+```javascript
+function render(template, data, options = {}) {
+  const shouldEscape = options.escape !== false;
+
+  const fnBody = [];
+  fnBody.push('var __r=[];');
+
+  if (shouldEscape) {
+    fnBody.push(
+      "function __esc(s){" +
+        "var s=String(s)," +
+        "m={'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#x27;'};" +
+        "return s.replace(/[&<>\"']/g,function(c){return m[c]})" +
+      "}"
+    );
+  }
 ```
 
-**为什么用 `new Function` 而不是 `eval`？**
-- `new Function` 创建的是独立函数，有自己的作用域，不会污染外部
-- `eval` 会在当前作用域执行，可能访问和修改外部变量
-- 面试约束要求不使用 `eval`，`new Function` 是合规替代
+**`__r=[]`**：结果数组，所有输出都 push 到这里，最后 `join('')`。
+
+**`__esc` 转义函数**：注入到生成代码中，对 `&<>"'` 五种字符做 HTML 转义，默认开启。
+
+### 3.3 控制结构解析
+
+```javascript
+  const lines = template.split('\n');
+
+  for (let li = 0; li < lines.length; li++) {
+    let line = lines[li];
+
+    while (line.length > 0) {
+      const eachOpen = line.match(/\{\{#each\s+(\w+)\}\}/);
+      const ifOpen = line.match(/\{\{#if\s+(\w+)\}\}/);
+      const eachClose = line.indexOf('{{/each}}');
+      const ifClose = line.indexOf('{{/if}}');
+
+      const candidates = [];
+      if (eachOpen) candidates.push({ type: 'each-open', idx: eachOpen.index, len: eachOpen[0].length, name: eachOpen[1] });
+      if (ifOpen) candidates.push({ type: 'if-open', idx: ifOpen.index, len: ifOpen[0].length, name: ifOpen[1] });
+      if (eachClose !== -1) candidates.push({ type: 'each-close', idx: eachClose, len: 9 });
+      if (ifClose !== -1) candidates.push({ type: 'if-close', idx: ifClose, len: 7 });
+```
+
+逐行处理模板，用正则匹配控制标签。一行可能有多个标签，所以用 `while` 循环逐步消费。
+
+```javascript
+      if (candidates.length === 0) {
+        fnBody.push(pushLine(line, shouldEscape));
+        line = '';
+        break;
+      }
+
+      candidates.sort((a, b) => a.idx - b.idx);
+      const first = candidates[0];
+
+      const before = line.substring(0, first.idx);
+      if (before) {
+        fnBody.push(pushLine(before, shouldEscape));
+      }
+
+      switch (first.type) {
+        case 'each-open':
+          fnBody.push(`var __arr=${first.name};for(var __i=0;__i<__arr.length;__i++){`);
+          break;
+        case 'if-open':
+          fnBody.push(`if(${first.name}){`);
+          break;
+        case 'each-close':
+        case 'if-close':
+          fnBody.push('}');
+          break;
+      }
+
+      line = line.substring(first.idx + first.len);
+    }
+
+    if (li < lines.length - 1) {
+      fnBody.push("__r.push('\\n');");
+    }
+  }
+```
+
+按位置排序取第一个标签，处理标签前的文本，然后将标签转为对应的 JS 代码。
+
+### 3.4 执行生成的代码
+
+```javascript
+  const code = `with(__data){${fnBody.join(';\n')};return __r.join('');}`;
+  const fn = new Function('__data', code);
+  return fn(data);
+}
+```
+
+**`with(__data)`**：将数据对象的属性注入作用域链，模板中直接写 `name` 就能访问 `data.name`。
+
+**`new Function`**：创建独立函数，不使用 `eval`（`eval` 会污染当前作用域）。
 
 ---
 
-### 第五步：边界处理与安全考量
+## 第四步：常见追问
 
-#### XSS 防护（已内置）
+### Q1：with 语句有什么缺点？
 
-默认开启 HTML 转义，防止 `<script>` 等注入：
+- 性能问题：引擎无法在编译时确定变量来源，无法优化
+- 严格模式下被禁止
+- 但在模板引擎场景下恰好是最佳选择——就是要动态建立作用域
 
-```js
-// 内置的转义函数（注入到生成代码中）
-function __esc(s) {
-  var s = String(s),
-    m = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' };
-  return s.replace(/[&<>"']/g, function (c) { return m[c]; });
-}
+### Q2：如何防止 XSS？
 
-// 使用示例
-render('<div>{{content}}</div>', { content: '<script>alert("xss")</script>' });
-// → '<div>&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;</div>'
+默认开启 HTML 转义，对 `&<>"'` 做替换。可通过 `options.escape = false` 关闭（渲染可信 HTML 时）。
 
-// 如需关闭转义（如渲染可信 HTML）
-render('<b>{{name}}</b>', { name: 'Tom' }, { escape: false });
-// → '<b>Tom</b>'
-```
+### Q3：如何实现编译缓存？
 
-#### 变量不存在兜底
-
-变量不存在时输出空字符串而非 "undefined"：
-
-```js
-// 生成的代码使用 typeof 检查
-(typeof name !== 'undefined' ? name : '')
-
-// 测试
-render('Hello {{missing}}', {});
-// → 'Hello '
-```
-
-#### 编译缓存（进阶优化）
-
-```js
+```javascript
 const cache = {};
 function render(template, data) {
   if (!cache[template]) {
-    cache[template] = compile(template); // 只编译一次
+    cache[template] = compile(template);
   }
   return cache[template](data);
 }
 ```
 
-#### 更安全的沙箱
+同一模板只编译一次，后续直接调用缓存的函数。
 
-`with` + `new Function` 仍然可以让模板访问全局对象（如 `window`、`document`）。真正的沙箱需要：
-- 使用 `Proxy` 拦截属性访问
-- 限制可访问的全局白名单
-- 或者用 AST 解析替代直接执行
+### Q4：与 Vue 模板编译相比缺少了什么？
 
-#### 嵌套循环局限
-
-当前实现中循环使用硬编码变量名 `__arr` 和 `__i`，因此不支持 `{{#each}}` 嵌套 `{{#each}}`。如需支持，需改用栈结构或生成唯一变量名。
+- 没有 AST 解析（本题用正则直接生成代码）
+- 没有虚拟 DOM diff
+- 没有表达式求值（如 `{{a + b}}`）
+- 没有指令系统（`v-if`、`v-for` 等）
 
 ---
 
-## 总结
+## 第五步：易错点
 
-```
-模板字符串
-    ↓ 正则解析（split + 捕获组）
-Token 流（文本 + 表达式 + 控制语句）
-    ↓ 代码生成（pushLine + 控制结构）
-可执行函数体（with + push + __esc 转义）
-    ↓ new Function
-最终渲染结果
-```
-
-这道题考察的不只是正则能力，更是对 JS 执行模型（作用域链、`with`、`Function` 构造器）的深入理解。能清晰讲出 `with` 的利弊和 `new Function` vs `eval` 的区别，是加分项。
+| 易错点 | 说明 |
+|-------|------|
+| 用 eval 而非 new Function | eval 污染当前作用域，应使用 new Function |
+| 不处理变量不存在 | 应输出空字符串而非 "undefined" |
+| 不做 XSS 转义 | 用户输入可能包含 `<script>` |
+| 用 split('-') 解析预发布标签 | 多 `-` 会丢失，应用 indexOf + slice |
+| 循环内不支持 this/@index | 需要特殊映射到 __arr[__i] 和 __i |
+| 文本中的单引号不转义 | 生成的代码会语法错误 |

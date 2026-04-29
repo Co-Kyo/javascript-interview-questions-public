@@ -26,7 +26,7 @@ events = {
 
 ### `on(event, fn)` — 订阅
 
-```js
+```javascript
 on(event, fn) {
   if (!this._events.has(event)) {
     this._events.set(event, []);
@@ -40,7 +40,7 @@ on(event, fn) {
 
 ### `off(event, fn)` — 取消订阅
 
-```js
+```javascript
 off(event, fn) {
   const listeners = this._events.get(event);
   if (!listeners) return this;
@@ -60,7 +60,7 @@ off(event, fn) {
 
 ### `emit(event, ...args)` — 发布
 
-```js
+```javascript
 emit(event, ...args) {
   const listeners = this._events.get(event);
   if (!listeners || listeners.length === 0) return false;
@@ -80,13 +80,13 @@ emit(event, ...args) {
 
 `once` 是面试的核心考点，实现思路是 **wrapper 替身**：
 
-```js
+```javascript
 once(event, fn) {
   const wrapper = (...args) => {
-    this.off(event, wrapper);  // 先移除自身
-    fn.apply(this, args);      // 再执行原始函数
+    this.off(event, wrapper);
+    fn.apply(this, args);
   };
-  wrapper._original = fn;      // 保存原始引用，支持 off 精确移除
+  wrapper._original = fn;
   return this.on(event, wrapper);
 }
 ```
@@ -135,19 +135,9 @@ once(event, fn) {
 
 ### 实际应用场景
 
-```js
-// 1. Vue 2 EventBus
-const bus = new Vue();  // Vue 实例自带 $on/$emit/$off
-bus.$on('login', handleLogin);
-
-// 2. Node.js HTTP Server
-const server = http.createServer();
-server.on('request', handleRequest);
-server.once('listening', () => console.log('Server started'));
-
-// 3. DOM 事件
-element.addEventListener('click', handler);  // 本质也是发布订阅
-```
+- **Vue 2 EventBus**：Vue 实例自带 `$on`/`$emit`/`$off`
+- **Node.js HTTP Server**：`server.on('request', handler)`，`server.once('listening', callback)`
+- **DOM 事件**：`addEventListener` 本质也是发布订阅
 
 ---
 

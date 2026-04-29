@@ -5,7 +5,7 @@
 ### 核心 API
 
 ```javascript
-const chunk = file.slice(start, end); // 返回 Blob，不读入内存
+const chunk = file.slice(start, end);
 ```
 
 `File.slice()` 是分片上传的基础。它返回文件指定区间的 `Blob` 对象，**不会将整个文件读入内存**，对大文件非常友好。
@@ -24,11 +24,7 @@ const chunk = file.slice(start, end); // 返回 Blob，不读入内存
 分片 99: file.slice(103809024,  104857600)
 ```
 
-### 关键点
-
-- 最后一个分片通常不足 `chunkSize`，需要用 `Math.min(start + chunkSize, file.size)` 截断
-- `slice()` 是零拷贝操作，性能开销极小
-- 切割出的 Blob 可直接放入 `FormData` 上传
+最后一个分片通常不足 `chunkSize`，需要用 `Math.min(start + chunkSize, file.size)` 截断。`slice()` 是零拷贝操作，性能开销极小，切割出的 Blob 可直接放入 `FormData` 上传。
 
 ---
 
@@ -37,11 +33,13 @@ const chunk = file.slice(start, end); // 返回 Blob，不读入内存
 ### 为什么不能用 Promise.all？
 
 ```javascript
-// ❌ 错误做法：100 个分片同时发起 100 个请求
 await Promise.all(chunks.map(chunk => upload(chunk)));
-// 浏览器会限制同域名并发连接数（通常 6 个）
-// 导致大量请求排队，且无法精确控制并发
 ```
+
+> ⚠️ 100 个分片同时发起 100 个请求
+
+
+浏览器会限制同域名并发连接数（通常 6 个），导致大量请求排队，且无法精确控制并发。
 
 ### 正确做法：并发池（Concurrency Pool）
 
@@ -62,62 +60,31 @@ t3: [上传2完成] → [上传5]
 const executing = new Set();
 
 while (nextIndex < total || executing.size > 0) {
-  // 填满并发池
   while (nextIndex < total && executing.size < concurrency) {
     const p = uploadChunk(nextIndex++).then(() => executing.delete(p));
     executing.add(p);
   }
-  // 等待任意一个完成
   await Promise.race(executing);
 }
 ```
 
-这个模式叫 **并发池 / 任务队列**，是前端并发控制的标准方案。面试中考察的是你对 `Promise.race` + 循环调度的理解。
+外层循环持续调度，内层循环在并发未满时填满任务。`Promise.race(executing)` 等待任意一个完成后，循环回到内层检查是否可以调度新任务。这个模式叫 **并发池 / 任务队列**，是前端并发控制的标准方案。
 
 ---
 
 ## 第三步：进度回调 — 等比计算
 
-### 进度模型
-
-```
-总分片数: 100
-已上传:   32
-进度 = 32 / 100 * 100 = 32.0%
-```
-
-### 更新时机
-
 ```javascript
-// 每个分片上传成功后：
 uploadedCount++;
 const percentage = (uploadedCount / totalChunks) * 100;
 onProgress(percentage);
 ```
 
-### 更精细的进度（替代方案）
-
-> 注意：以下方案使用 `XMLHttpRequest` 替代 `fetch`，仅在需要字节级进度时使用。主方案基于分片数等比计算已足够覆盖大多数场景。
-
-如果需要字节级别的进度，可以使用 `XMLHttpRequest` 的 `upload.onprogress` 事件：
-
-```javascript
-xhr.upload.onprogress = (e) => {
-  if (e.lengthComputable) {
-    const chunkProgress = e.loaded / e.total;     // 当前分片进度 0~1
-    const overallProgress = (uploadedCount + chunkProgress) / totalChunks * 100;
-    onProgress(overallProgress);
-  }
-};
-```
+每个分片上传成功后，`uploadedCount` 加一，按分片数等比计算进度百分比。如果需要字节级别的更精细进度，可以使用 `XMLHttpRequest` 的 `upload.onprogress` 事件替代 `fetch`。
 
 ---
 
 ## 第四步：失败重试 — 指数退避
-
-### 为什么需要指数退避？
-
-网络错误通常是暂时的（如瞬时断网、服务器过载）。立即重试可能加剧问题。指数退避让重试间隔逐渐增大，给网络恢复的时间。
 
 ### 退避策略
 
@@ -125,8 +92,7 @@ xhr.upload.onprogress = (e) => {
 第 1 次重试: 等待 1s   (2^0 * 1000)
 第 2 次重试: 等待 2s   (2^1 * 1000)
 第 3 次重试: 等待 4s   (2^2 * 1000)
-第 4 次重试: 等待 8s   (2^3 * 1000)
-...上限通常设为 10~30s
+...上限通常设为 10s
 ```
 
 ### 实现要点
@@ -137,11 +103,11 @@ async function uploadChunk(index) {
   while (retries <= maxRetries) {
     try {
       await doUpload(index);
-      return; // 成功，退出
+      return;
     } catch (error) {
-      if (error.name === 'AbortError') throw error; // 取消不重试
+      if (error.name === 'AbortError') throw error;
       retries++;
-      if (retries > maxRetries) throw error; // 超限，抛出
+      if (retries > maxRetries) throw error;
       const delay = Math.min(1000 * Math.pow(2, retries - 1), 10000);
       await sleep(delay);
     }
@@ -149,42 +115,23 @@ async function uploadChunk(index) {
 }
 ```
 
-### 面试追问
-
-- **Q: 如何判断哪些错误值得重试？**
-  A: 网络错误（`TypeError`）、5xx 服务器错误、429 限流值得重试；4xx 客户端错误（如 401、403）通常不值得重试。
-
-- **Q: 如何实现断点续传？**
-  A: 上传前先向服务端查询已上传的分片列表，跳过已上传的分片。前端可用 `localStorage` 或 `IndexedDB` 记录上传状态。
+`AbortError`（用户取消）直接抛出不重试。4xx 客户端错误（除 429 限流外）也不值得重试。网络错误（`TypeError`）和 5xx 服务器错误才进入重试逻辑。
 
 ---
 
 ## 第五步：取消上传 — AbortController
 
-### 机制
-
 ```javascript
 const controller = new AbortController();
 const { signal } = controller;
 
-// 传入 fetch
 fetch('/upload', { signal });
-
-// 用户点击取消
-controller.abort(); // 所有使用该 signal 的 fetch 请求都会被中断
+controller.abort();
 ```
 
-### 实现要点
+调用 `controller.abort()` 后，所有使用该 `signal` 的 `fetch` 请求都会被中断。
 
-1. 在 `scheduler` 的循环中检查 `signal.aborted`
-2. 在 `fetch` 请求中传入 `signal`
-3. 将 `AbortController` 返回给调用方，支持外部取消
-
-```javascript
-if (signal.aborted) {
-  throw new DOMException('Upload aborted', 'AbortError');
-}
-```
+在 `scheduler` 的循环中检查 `signal.aborted`，在 `fetch` 请求中传入 `signal`，将 `AbortController` 返回给调用方支持外部取消。用户取消后，所有进行中的请求被中断，同时调用 `onError`（如果是非主动取消的错误）。
 
 ---
 
@@ -193,7 +140,7 @@ if (signal.aborted) {
 | 维度 | 复杂度 | 说明 |
 |------|--------|------|
 | 时间 | O(n) | n = 分片数，每个分片最多处理 (maxRetries+1) 次 |
-| 空间 | O(n) | chunkStatus 数组 + executing Set（最多 concurrency 个） |
+| 空间 | O(n) | executing Set（最多 concurrency 个） |
 | 网络 | O(n) | n 次上传请求 + 1 次合并请求 |
 
 ## 面试评分维度
@@ -206,10 +153,8 @@ if (signal.aborted) {
 | 失败重试 | 20% | 指数退避，重试次数限制 |
 | 取消支持 | 15% | `AbortController` 的集成 |
 
-## 常见踩坑
+## 常见面试追问
 
-1. **忘记处理最后一个分片的边界**：`file.slice()` 的 end 不能超过 `file.size`
-2. **并发池中 Promise 泄漏**：任务完成后必须从 `executing` Set 中移除
-3. **重试时不检查取消状态**：用户取消后不应继续重试
-4. **进度回调频率过高**：如果分片很多（如 10000 片），需要节流 `onProgress`
-5. **没有生成稳定的文件标识**：断点续传依赖文件 ID 的一致性
+- **如何判断哪些错误值得重试？** 网络错误（`TypeError`）、5xx 服务器错误、429 限流值得重试；4xx 客户端错误（如 401、403）通常不值得重试。
+- **如何实现断点续传？** 上传前先向服务端查询已上传的分片列表，跳过已上传的分片。前端可用 `localStorage` 或 `IndexedDB` 记录上传状态。
+- **进度回调频率过高怎么办？** 如果分片很多（如 10000 片），需要节流 `onProgress`。

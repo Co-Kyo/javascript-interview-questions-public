@@ -31,26 +31,21 @@ function _flatten(arr, depth, result, startIdx) {
     const item = arr[i];
 
     if (Array.isArray(item) && depth > 0) {
-      // 子数组 + 还有深度 → 递归展开
       const count = _flatten(item, depth - 1, result, writeIdx);
       writeIdx += count;
     } else {
-      // 非数组或深度耗尽 → 直接放入结果
       result[writeIdx] = item;
       writeIdx++;
     }
   }
 
-  return writeIdx - startIdx;  // 返回写入元素数，供父级计算偏移
+  return writeIdx - startIdx;
 }
 ```
 
 > ⚠️ **注意**：以上为简化版，省略了稀疏数组处理。完整的稀疏数组逻辑见第三步。
 
-**关键点**：
-- `depth - 1`：每递归一层，深度减 1
-- `depth = 0` 时不再递归，子数组整体保留
-- 返回写入数量，让父级知道结果数组的下一个写入位置
+`depth - 1`：每递归一层，深度减 1。`depth = 0` 时不再递归，子数组整体保留。返回写入数量，让父级知道结果数组的下一个写入位置。
 
 **如果用 reduce 实现**：将 `result` 作为累加器，每次遇到子数组就递归调用 `myFlat` 并用 `push(...spread)` 合并——更简洁但稀疏数组处理更复杂。
 
@@ -64,28 +59,28 @@ function _flatten(arr, depth, result, startIdx) {
 
 ```javascript
 const sparse = [1, , 3];
-//            索引0=1, 索引1=空槽, 索引2=3
 
-0 in sparse  // true  — 索引0有值
-1 in sparse  // false — 索引1是空槽
-2 in sparse  // true  — 索引2有值
+0 in sparse
+1 in sparse
+2 in sparse
 
 const normal = [1, undefined, 3];
-1 in normal  // true  — 索引1有值（值为 undefined）
+1 in normal
 ```
 
-**`for` 循环遍历稀疏数组时，空槽会被跳过**（循环体不执行）。因此必须用 `in` 操作符主动检测空槽：
+上面代码的返回值分别是 `true`、`false`、`true`、`true`。索引 0 和 2 有值所以返回 `true`，索引 1 是空槽所以返回 `false`；而普通数组中 `undefined` 是有值的，所以 `1 in normal` 返回 `true`。
+
+`for` 循环遍历稀疏数组时，空槽会被跳过（循环体不执行）。因此必须用 `in` 操作符主动检测空槽：
 
 ```javascript
 if (!(i in arr)) {
-  // 空槽 → 在 result 中也制造一个空槽
   writeIdx++;
-  result.length = writeIdx;  // 扩展长度但不赋值 = 空槽
+  result.length = writeIdx;
   continue;
 }
 ```
 
-**原生 `flat()` 的行为**：保留空槽，不填充 `undefined`。我们的实现要对齐这个行为。
+`result.length = writeIdx` 扩展数组长度但不赋值，从而产生空槽。原生 `flat()` 的行为就是保留空槽、不填充 `undefined`，我们的实现要对齐这个行为。
 
 ---
 
@@ -94,35 +89,29 @@ if (!(i in arr)) {
 递归的本质是利用调用栈。我们可以用**显式栈**模拟同样的过程，避免深层嵌套时的调用栈溢出风险。
 
 ```javascript
-// 栈中每项：[待处理数组, 当前遍历到的索引, 剩余深度]
 const stack = [[rootArray, 0, depth]];
 
 while (stack.length > 0) {
-  const [arr, idx, d] = stack[stack.length - 1];  // peek 栈顶
+  const [arr, idx, d] = stack[stack.length - 1];
 
   if (idx >= arr.length) {
-    stack.pop();       // 当前数组遍历完毕，回退到父级
+    stack.pop();
     continue;
   }
 
-  stack[stack.length - 1][1]++;  // 推进索引
+  stack[stack.length - 1][1]++;
 
   const item = arr[idx];
 
   if (Array.isArray(item) && d > 0) {
-    stack.push([item, 0, d - 1]);  // 遇到子数组 → 压栈
+    stack.push([item, 0, d - 1]);
   } else {
-    result.push(item);             // 非数组 → 直接输出
+    result.push(item);
   }
 }
 ```
 
-**核心思想**：
-- **压栈** = 进入子数组（depth - 1）
-- **弹栈** = 子数组处理完毕，回到父级继续
-- **推进索引** = 处理当前数组的下一个元素
-
-这和递归版逻辑完全等价，只是调用栈从隐式变成了显式。
+栈中每项记录 `[待处理数组, 当前索引, 剩余深度]`。**压栈** = 进入子数组（depth - 1），**弹栈** = 子数组处理完毕回到父级，**推进索引** = 处理当前数组的下一个元素。这和递归版逻辑完全等价，只是调用栈从隐式变成了显式。
 
 ---
 
@@ -155,21 +144,6 @@ while (stack.length > 0) {
 
 1. **Q：reduce 版怎么做？**
    A：用 `reduce` 遍历数组，累加器是结果数组。遇到子数组时递归调用 `myFlat` 并用 `push(...spread)` 合并。注意：此方式会将稀疏数组空槽填充为 `undefined`，与原生 `flat()` 行为不同，面试中可作为讨论点。
-
-   ```javascript
-   Array.prototype.myFlatReduce = function (depth = 1) {
-     if (depth !== depth) depth = 0;
-     if (depth < 0) depth = 0;
-     return this.reduce((acc, item) => {
-       if (Array.isArray(item) && depth > 0) {
-         acc.push(...item.myFlatReduce(depth - 1));
-       } else {
-         acc.push(item);
-       }
-       return acc;
-     }, []);
-   };
-   ```
 
 2. **Q：`flat` 和 `flatMap` 的区别？**
    A：`flatMap` = 先 `map` 再 `flat(1)`，只展开一层。

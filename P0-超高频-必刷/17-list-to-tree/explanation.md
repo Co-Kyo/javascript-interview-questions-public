@@ -13,15 +13,17 @@
 ```javascript
 const nodeMap = new Map();
 for (const item of list) {
+  if (item.id == null) continue;
   nodeMap.set(item.id, { ...item, children: [] });
 }
 ```
 
 **为什么用 Map 而不是 Object？**
 - `Object` 的 key 只能是字符串，数字 id 会被隐式转换（`obj[1]` 实际是 `obj["1"]`），容易踩坑
-- `Object` 可能受到原型链属性干扰（如 `toString`、`constructor` 筦）
+- `Object` 可能受到原型链属性干扰（如 `toString`、`constructor` 等）
 - `Map` 保留原始 key 类型，查找复杂度稳定 O(1)
-- 为什么用 `{ ...item, children: [] }` 浅拷贝？避免修改原始数据（不可变原则）
+
+**为什么用 `{ ...item, children: [] }` 浅拷贝？** 避免修改原始数据（不可变原则）。`item.id == null` 使用宽松比较，跳过缺少 id 的无效节点。
 
 ## 第三步：父子挂载
 
@@ -29,9 +31,9 @@ for (const item of list) {
 const tree = [];
 for (const node of nodeMap.values()) {
   if (node.parentId == null) {
-    tree.push(node);  // 根节点
+    tree.push(node);
   } else {
-    const parent = nodeMap.get(node.parentId);  // O(1) 查找父节点
+    const parent = nodeMap.get(node.parentId);
     if (parent) {
       parent.children.push(node);
     }
@@ -42,10 +44,9 @@ for (const node of nodeMap.values()) {
 **关键细节**：
 - `parentId == null` 使用宽松比较，同时匹配 `null` 和 `undefined`
 - 通过 `nodeMap.get()` 在 O(1) 内找到父节点，避免了嵌套循环
-- 如果父节点不存在（数据不完整），当前节点被静默丢弃。生产环境应加日志
+- 如果父节点不存在（数据不完整），当前节点被静默丢弃
 
-**为什么子节点可以先于父节点出现？**
-因为我们在挂载阶段，所有节点都已经在 Map 里了。不管列表顺序如何，都能通过 id 找到对应的父节点。
+**为什么子节点可以先于父节点出现？** 因为我们在挂载阶段，所有节点都已经在 Map 里了。不管列表顺序如何，都能通过 id 找到对应的父节点。
 
 ## 第四步：处理边界情况
 
@@ -55,9 +56,9 @@ for (const node of nodeMap.values()) {
 | 非数组输入 | `!Array.isArray(list)` 守卫，返回 `[]` |
 | parentId 为 undefined | `== null` 宽松匹配，视为根节点 |
 | 缺少 id 字段 | `item.id == null` 跳过无效节点 |
-| 父节点不存在 | `if (parent)` 守卫，跳过该节点并输出警告 |
+| 父节点不存在 | `if (parent)` 守卫，跳过该节点 |
 | 多个根节点 | 循环中多个节点的 `parentId == null`，都会被 push 进 tree |
-| 循环引用 | parentId 互指的节点自然成为孤立节点，被警告捕获 |
+| 循环引用 | parentId 互指的节点自然成为孤立节点 |
 
 ## 第五步：复杂度分析
 
@@ -71,25 +72,8 @@ for (const node of nodeMap.values()) {
 ## 常见追问
 
 **Q：如果需要递归版怎么写？**
-递归版本质上是反过来：对每个节点，去列表里找 `parentId === 自己 id` 的子节点，递归调用。
 
 ```javascript
-function listToTreeRecursive(list) {
-  const map = new Map(list.map(item => [item.id, { ...item, children: [] }]));
-  const tree = [];
-
-  for (const node of map.values()) {
-    if (node.parentId == null) {
-      tree.push(node);
-    } else {
-      const parent = map.get(node.parentId);
-      if (parent) parent.children.push(node);
-    }
-  }
-  return tree;
-}
-
-// 纯递归版（无 Map 索引，O(n²) 但代码更直观）
 function listToTreePureRecursive(list, parentId = null) {
   return list
     .filter(item => item.parentId === parentId)
@@ -100,26 +84,11 @@ function listToTreePureRecursive(list, parentId = null) {
 }
 ```
 
+纯递归版没有 Map 索引，每次 filter 都遍历整个列表，时间复杂度 O(n²)，但代码更直观。
+
 **Q：如何检测循环引用？**
-在标准 listToTree 中，循环引用的节点（如 A→B→A）会导致所有环内节点都找不到有效根节点，最终被静默丢弃。如需主动检测，可在挂载后对每个根节点做 DFS，用 `visited` Set 记录路径上的节点 id，遇到重复即为环。
 
-```javascript
-function detectCycles(nodes, ancestors = new Set()) {
-  for (const node of nodes) {
-    if (ancestors.has(node.id)) {
-      console.warn(`循环引用：节点 ${node.id}`);
-      return true;
-    }
-    ancestors.add(node.id);
-    if (detectCycles(node.children, ancestors)) return true;
-    ancestors.delete(node.id);
-  }
-  return false;
-}
-```
-
-**Q：如何支持懒加载（异步加载子节点）？**
-不预填充 children 数组，改为在节点上标记 `isLeaf: false`，点击时再请求接口加载子节点并插入树中。
+在标准 listToTree 中，循环引用的节点会导致所有环内节点都找不到有效根节点，最终被静默丢弃。如需主动检测，可在挂载后对每个根节点做 DFS，用 `visited` Set 记录路径上的节点 id，遇到重复即为环。
 
 **Q：前端实际应用场景？**
 - Ant Design / Element Plus 的 TreeSelect 组件需要树形数据
