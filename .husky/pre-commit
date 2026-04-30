@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Prevent committing markdown files whose only changes are line ending differences.
+git diff --cached --name-only --diff-filter=ACMRT -- '*.md' | while IFS= read -r file; do
+  if [ -z "$(git diff --cached --ignore-space-at-eol -- "$file")" ]; then
+    echo "Restoring eol-only change: $file"
+    git restore --staged -- "$file"
+    git checkout -- "$file"
+  fi
+done
