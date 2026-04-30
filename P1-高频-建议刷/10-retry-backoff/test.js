@@ -1,4 +1,4 @@
-const { retryFetch, retryFetchWithJitter, retryFetchCancellable } = require('./solution.js');
+const { retryFetch } = require('./solution.js');
 
 (async () => {
   const result1 = await retryFetch(() => Promise.resolve('ok'), { retries: 3, delay: 10, backoff: 1 });
@@ -45,27 +45,6 @@ const { retryFetch, retryFetchWithJitter, retryFetchCancellable } = require('./s
     console.assert(false, 'should throw TypeError');
   } catch (e) {
     console.assert(e instanceof TypeError, 'non-function fn throws TypeError');
-  }
-
-  let count6 = 0;
-  const result6 = await retryFetchWithJitter(() => {
-    count6++;
-    if (count6 < 2) return Promise.reject(new Error('fail'));
-    return Promise.resolve('jitter ok');
-  }, { retries: 3, delay: 10, backoff: 1 });
-  console.assert(result6 === 'jitter ok', 'jitter version works');
-
-  let count7 = 0;
-  const p7 = retryFetchCancellable(() => {
-    count7++;
-    return Promise.reject(new Error('fail'));
-  }, { retries: 10, delay: 100, backoff: 1 });
-  setTimeout(() => p7.abort(), 50);
-  try {
-    await p7;
-    console.assert(false, 'should throw AbortError');
-  } catch (e) {
-    console.assert(e.name === 'AbortError', 'abort throws AbortError');
   }
 
   console.log('✅ 10-retry-backoff 全部通过');

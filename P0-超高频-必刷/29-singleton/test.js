@@ -52,20 +52,4 @@ console.assert(primary1 !== replica, 'singletonByKey: 不同参数独立实例')
 console.assert(primary1.name === 'primary', 'singletonByKey: primary 名称正确');
 console.assert(replica.name === 'replica', 'singletonByKey: replica 名称正确');
 
-// === 输入校验 ===
-
-try {
-  singleton(42);
-  console.assert(false, 'singleton: 非函数参数应抛 TypeError');
-} catch (e) {
-  console.assert(e instanceof TypeError, 'singleton: 非函数参数抛 TypeError');
-}
-
-try {
-  singleton('not a class');
-  console.assert(false, 'singleton: 字符串参数应抛 TypeError');
-} catch (e) {
-  console.assert(e instanceof TypeError, 'singleton: 字符串参数抛 TypeError');
-}
-
 console.log('✅ 全部通过');

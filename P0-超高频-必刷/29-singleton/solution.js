@@ -1,8 +1,4 @@
 function singleton(Class) {
-  if (typeof Class !== 'function') {
-    throw new TypeError(`singleton() expects a class or constructor function, got ${typeof Class}`);
-  }
-
   let instance = null;
 
   const SingletonProxy = new Proxy(Class, {
@@ -18,10 +14,6 @@ function singleton(Class) {
 }
 
 function singletonWithDestroy(Class) {
-  if (typeof Class !== 'function') {
-    throw new TypeError(`singletonWithDestroy() expects a class or constructor function`);
-  }
-
   let instance = null;
 
   const SingletonProxy = new Proxy(Class, {
@@ -41,10 +33,6 @@ function singletonWithDestroy(Class) {
 }
 
 function singletonByKey(Class) {
-  if (typeof Class !== 'function') {
-    throw new TypeError(`singletonByKey() expects a class or constructor function`);
-  }
-
   const instances = new Map();
 
   return new Proxy(Class, {

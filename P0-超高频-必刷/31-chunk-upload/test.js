@@ -71,28 +71,6 @@ async function runTests() {
   console.assert(emptyResult !== null, '空文件: 直接调用 onComplete');
   console.assert(fetchCalls.length === 0, '空文件: 不发起任何请求');
 
-  // --- 参数校验 ---
-  try {
-    chunkUpload(null);
-    console.assert(false, '参数校验: null file 应抛 TypeError');
-  } catch (e) {
-    console.assert(e instanceof TypeError, '参数校验: null file 抛 TypeError');
-  }
-
-  try {
-    chunkUpload({ size: 100, slice: () => {} }, { chunkSize: 0 });
-    console.assert(false, '参数校验: chunkSize=0 应抛 RangeError');
-  } catch (e) {
-    console.assert(e instanceof RangeError, '参数校验: chunkSize=0 抛 RangeError');
-  }
-
-  try {
-    chunkUpload({ size: 100, slice: () => {} }, { concurrency: 0 });
-    console.assert(false, '参数校验: concurrency=0 应抛 RangeError');
-  } catch (e) {
-    console.assert(e instanceof RangeError, '参数校验: concurrency=0 抛 RangeError');
-  }
-
   // --- generateFileId ---
   const id1 = generateFileId(createMockFile('a.txt', 100, 1));
   const id2 = generateFileId(createMockFile('a.txt', 100, 2));

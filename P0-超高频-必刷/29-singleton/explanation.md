@@ -182,3 +182,55 @@ function singletonByKey(Class) {
 | `new.target` 差异 | 某些旧引擎对 Proxy 的 `new.target` 处理不一致 | 使用 `Reflect.construct` 可规避大部分问题 |
 | 测试困难 | 全局共享状态导致测试间互相影响 | 使用 `destroy()` 重置，或在测试中避免单例 |
 | 内存泄漏 | 单例实例永远不会被 GC | 对于需要释放资源的场景实现 `destroy` 方法 |
+
+### 易错点：理解 Proxy construct trap 的自动类型检查
+
+本题的 `singleton` 函数**没有手动校验 `Class` 参数是否为函数**，这不是遗漏，而是有意识的设计选择。
+
+**为什么不需要手动 `throw TypeError`？**
+
+Proxy 的 `construct` trap 在触发时，JavaScript 引擎会先检查 `target` 是否可构造（即是否为函数）。如果 `target` 不是函数，引擎会自动抛出 `TypeError: xxx is not a constructor`，根本不会进入 trap 代码体。
+
+```javascript
+const proxy = new Proxy({}, {        // target 是普通对象，不是函数
+  construct(target, args) {
+    // 这段代码永远不会执行
+    return {};
+  }
+});
+
+new proxy(); // → TypeError: {} is not a constructor（引擎层面抛出）
+```
+
+**这意味着**：
+
+1. `singleton("not a function")` → 第一次 `new` 时自然抛出 TypeError，无需手动校验
+2. `singleton(null)` → 同上，Proxy 内部机制保证了类型安全
+3. 我们的代码只需要关注**核心逻辑**（闭包缓存实例），类型校验交给语言机制
+
+**与手动校验的对比**：
+
+```javascript
+// ❌ 多余的手动校验
+function singleton(Class) {
+  if (typeof Class !== 'function') {
+    throw new TypeError('Class must be a constructor function');
+  }
+  // ...
+}
+
+// ✅ 利用 Proxy 自动校验，代码更简洁
+function singleton(Class) {
+  let instance = null;
+  return new Proxy(Class, {
+    construct(target, args) {
+      if (!instance) {
+        instance = Reflect.construct(target, args);
+      }
+      return instance;
+    },
+  });
+}
+```
+
+**面试启示**：理解语言机制比堆砌防御代码更重要。知道 Proxy 的 `construct` trap 会自动校验 target 类型，就能写出更简洁、更地道的代码。

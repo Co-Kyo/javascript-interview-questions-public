@@ -13,7 +13,7 @@
 - `Subject` 类：支持 `subscribe`、`unsubscribe`、`notify`
 - `Observer` 类：包含 `update` 方法
 - Subject **直接持有** Observer 引用，**直接调用** `update()`
-- 重复订阅应去重（用 Set）；取消不存在的订阅应静默处理
+- 重复订阅应去重（用 Set）；无效输入应静默处理
 
 ### 2. PubSub（发布订阅）模式
 

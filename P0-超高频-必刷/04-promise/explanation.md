@@ -2,6 +2,10 @@
 
 ---
 
+> **实现分级说明**：本讲解覆盖**完整 A+ 版**（含 thenable 解析、循环引用检测、allSettled、resolvePromise 递归解析）。其中 **基础版核心** 部分（构造函数 + 三态管理、then + 链式调用 + 值穿透、catch/finally、all/race、静态方法）已在下文用代码详细讲解；A+ 特有部分（thenable 解析、循环引用检测）在 3.1 和 3.3 节中标注。
+
+---
+
 ## 第一步：理解问题
 
 ### 核心问题拆解
@@ -120,7 +124,7 @@ class MyPromise {
 **要点**：
 - 用数组存储回调，因为一个 Promise 可以被多次 then
 - executor 外层包 try-catch，捕获同步异常
-- `resolve` 中先检查是否是 Promise，再检查是否是 thenable（有 then 方法的对象），最后才作为普通值处理
+- `resolve` 中先检查是否是 Promise，再检查是否是 thenable（有 then 方法的对象）_（A+ 特有：thenable 解析）_，最后才作为普通值处理
 
 ### 3.2 实现 then
 
@@ -159,7 +163,7 @@ then(onFulfilled, onRejected) {
 
 **值穿透**：当 then 的参数不是函数时，用透传函数代替，保证值可以"穿透"到下一个有函数处理的 then。**异步执行**：用 `setTimeout(..., 0)` 模拟微任务。**返回新 Promise**：实现链式调用。
 
-### 3.3 resolvePromise（Resolution Procedure）
+### 3.3 resolvePromise（Resolution Procedure）_（A+ 版特有）_
 
 这是整个 Promise 最复杂的部分——处理 then 回调的返回值：
 
@@ -243,12 +247,13 @@ MyPromise.resolve(42)
 
 ### Q3：Promise.all 和 Promise.race 的区别？
 
-| 方法 | 行为 | 空数组 |
+| 方法 | 行为 | 空数组 | 备注 |
+|------|------|--------|------|
 |------|------|--------|
 | `all` | 全部成功才 resolve，任一失败立即 reject | `resolve([])` |
 | `race` | 取第一个完成的结果 | 永远 pending |
-| `allSettled` | 等所有完成，收集状态 | `resolve([])` |
-| `finally` | 无论成功失败都执行，不改变值 | — |
+| `allSettled` | 等所有完成，收集状态 | `resolve([])` | _（A+ 版特有）_ |
+| `finally` | 无论成功失败都执行，不改变值 | — | |
 
 ### Q4：为什么原生用微任务而不用宏任务？
 

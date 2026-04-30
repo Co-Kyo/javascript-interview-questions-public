@@ -1,8 +1,4 @@
 function chunkUpload(file, options = {}) {
-  if (!file || typeof file.size !== 'number' || typeof file.slice !== 'function') {
-    throw new TypeError('chunkUpload: file must be a File or Blob object');
-  }
-
   const {
     chunkSize = 1024 * 1024,
     concurrency = 3,
@@ -11,10 +7,6 @@ function chunkUpload(file, options = {}) {
     onComplete = () => {},
     onError = () => {},
   } = options;
-
-  if (chunkSize <= 0) throw new RangeError('chunkSize must be > 0');
-  if (concurrency < 1) throw new RangeError('concurrency must be >= 1');
-  if (maxRetries < 0) throw new RangeError('maxRetries must be >= 0');
 
   const totalChunks = Math.ceil(file.size / chunkSize);
 

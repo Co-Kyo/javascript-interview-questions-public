@@ -48,7 +48,7 @@ function sanitize(str) {
 
 **前导零处理**：`'007'` 经过处理后变为 `'7'`，避免结果出现 `'010'` 这样的前导零。`replace(/^0+/, '')` 去掉所有前导零后，如果变成空字符串则返回 `'0'`。
 
-### 3.2 双指针法（推荐 ✅）
+### 3.2 双指针法
 
 ```javascript
 function add(a, b) {
@@ -82,33 +82,7 @@ function add(a, b) {
 
 **`result.reverse().join('')`**：结果是逆序存储的（从低位到高位 push），最后必须反转再拼接。
 
-### 3.3 补零对齐法
-
-```javascript
-function addWithPad(a, b) {
-  a = sanitize(a);
-  b = sanitize(b);
-
-  const maxLen = Math.max(a.length, b.length);
-  const aPadded = a.padStart(maxLen, '0');
-  const bPadded = b.padStart(maxLen, '0');
-
-  let carry = 0;
-  const result = [];
-
-  for (let i = maxLen - 1; i >= 0; i--) {
-    const sum = parseInt(aPadded[i], 10) + parseInt(bPadded[i], 10) + carry;
-    result.push(sum % 10);
-    carry = Math.floor(sum / 10);
-  }
-
-  if (carry) result.push(carry);
-
-  return result.reverse().join('');
-}
-```
-
-**`padStart(maxLen, '0')`**：先将两个数补齐到相同长度，然后用单指针从尾部遍历，代码更直观。最后单独处理进位。
+**为什么不用补零对齐？** 补零对齐（`padStart`）需要额外 O(n) 空间，而双指针法通过 `i >= 0 ? ... : 0` 的判断直接处理长度差异，空间更优。面试中可口头讨论补零对齐的思路作为对比。
 
 ## 第四步：常见追问
 

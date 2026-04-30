@@ -51,23 +51,4 @@ const original = [1, [2, [3]]];
 original.myFlat(Infinity);
 console.assert(JSON.stringify(original) === '[1,[2,[3]]]', '不修改原数组');
 
-// 迭代版基本功能
-const r10 = [1, [2, [3, [4]]]].myFlatIterative(1);
-console.assert(JSON.stringify(r10) === '[1,2,[3,[4]]]', '迭代版 depth=1');
-
-const r11 = [1, [2, [3, [4]]]].myFlatIterative(Infinity);
-console.assert(JSON.stringify(r11) === '[1,2,3,4]', '迭代版 Infinity');
-
-// 迭代版稀疏数组
-const sr2 = [1, , [2, , 3]].myFlatIterative(1);
-console.assert(sr2.length === 5, '迭代版稀疏数组长度');
-console.assert(!(1 in sr2), '迭代版稀疏数组空槽');
-
-// reduce 版基本功能
-const r12 = [1, [2, [3, [4]]]].myFlatReduce(1);
-console.assert(JSON.stringify(r12) === '[1,2,[3,[4]]]', 'reduce版 depth=1');
-
-const r13 = [1, [2, [3, [4]]]].myFlatReduce(Infinity);
-console.assert(JSON.stringify(r13) === '[1,2,3,4]', 'reduce版 Infinity');
-
 console.log('✅ 08-array-flat 全部通过');

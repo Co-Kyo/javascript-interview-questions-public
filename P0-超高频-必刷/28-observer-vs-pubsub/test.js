@@ -49,22 +49,6 @@ const obs6 = new Observer('obs6', () => {});
 const ret = sub4.subscribe(obs5).subscribe(obs6);
 console.assert(ret === sub4, 'Observer: subscribe 支持链式调用');
 
-// Observer 构造函数校验
-try {
-  new Observer('bad', 'not a function');
-  console.assert(false, 'Observer: 非函数 callback 应抛 TypeError');
-} catch (e) {
-  console.assert(e instanceof TypeError, 'Observer: 非函数 callback 抛 TypeError');
-}
-
-// subscribe 校验
-try {
-  sub4.subscribe({ update: 'not a function' });
-  console.assert(false, 'Observer: 无 update 方法应抛 TypeError');
-} catch (e) {
-  console.assert(e instanceof TypeError, 'Observer: 无 update 方法抛 TypeError');
-}
-
 // ==================== PubSub 模式测试 ====================
 console.log('\n--- PubSub 模式 ---');
 
@@ -140,22 +124,6 @@ let onceParam = null;
 bus6.once('data', (msg) => { onceParam = msg; });
 bus6.emit('data', 'test-param');
 console.assert(onceParam === 'test-param', 'PubSub: once 正确传递参数');
-
-// on 校验
-try {
-  bus.on('bad', 'not a function');
-  console.assert(false, 'PubSub: 非函数 callback 应抛 TypeError');
-} catch (e) {
-  console.assert(e instanceof TypeError, 'PubSub: 非函数 callback 抛 TypeError');
-}
-
-// once 校验
-try {
-  bus.once('bad', 123);
-  console.assert(false, 'PubSub: once 非函数 callback 应抛 TypeError');
-} catch (e) {
-  console.assert(e instanceof TypeError, 'PubSub: once 非函数 callback 抛 TypeError');
-}
 
 // ==================== 对比验证 ====================
 console.log('\n--- 对比验证 ---');

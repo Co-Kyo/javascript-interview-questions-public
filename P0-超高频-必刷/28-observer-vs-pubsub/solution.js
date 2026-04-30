@@ -5,7 +5,7 @@ class Subject {
 
   subscribe(observer) {
     if (typeof observer !== 'object' || typeof observer.update !== 'function') {
-      throw new TypeError('Observer must be an object with an update() method');
+      return this;
     }
     this.observers.add(observer);
     return this;
@@ -25,11 +25,8 @@ class Subject {
 
 class Observer {
   constructor(name, callback) {
-    if (typeof callback !== 'function') {
-      throw new TypeError('Observer callback must be a function');
-    }
     this.name = name;
-    this.callback = callback;
+    this.callback = typeof callback === 'function' ? callback : () => {};
   }
 
   update(data) {
@@ -43,9 +40,7 @@ class EventBus {
   }
 
   on(event, callback) {
-    if (typeof callback !== 'function') {
-      throw new TypeError('EventBus.on() callback must be a function');
-    }
+    if (typeof callback !== 'function') return this;
     if (!this.events.has(event)) {
       this.events.set(event, []);
     }
@@ -78,9 +73,7 @@ class EventBus {
   }
 
   once(event, callback) {
-    if (typeof callback !== 'function') {
-      throw new TypeError('EventBus.once() callback must be a function');
-    }
+    if (typeof callback !== 'function') return this;
     const wrapper = (...args) => {
       callback(...args);
       this.off(event, wrapper);

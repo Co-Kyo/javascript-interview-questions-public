@@ -154,6 +154,37 @@ A：PubSub 组件销毁时调用 `off()` 取消所有订阅；Observer 调用 `u
 **Q：EventBus 和 Vuex/Redux 有什么关系？**
 A：Vuex/Redux 本质上也是 PubSub 的变体，但增加了状态管理（单一数据源、mutation/action 等约束），比裸 EventBus 更可控。
 
+### 易错点：理解"静默处理"的设计意图
+
+本题要求对无效输入（如非函数的 callback、非对象的 observer）进行**静默处理**——直接 `return this`，不抛出异常。
+
+**为什么选择静默处理？**
+
+1. **防御性编程**：EventBus/Subject 作为基础设施组件，不应因为调用方传了错误参数就崩溃整个应用
+2. **链式调用兼容**：`return this` 保证链式调用不会中断，即使某一步参数无效
+3. **与 DOM API 一致**：浏览器原生的 `addEventListener` 传入非函数也不会抛错，而是静默忽略
+
+**代码体现**：
+
+```javascript
+// Subject.subscribe — 无效 observer 静默返回
+subscribe(observer) {
+  if (typeof observer !== 'object' || typeof observer.update !== 'function') {
+    return this;  // 不抛错，不中断链式调用
+  }
+  this.observers.add(observer);
+  return this;
+}
+
+// EventBus.on / once — 非函数 callback 静默返回
+on(event, callback) {
+  if (typeof callback !== 'function') return this;
+  // ...
+}
+```
+
+**面试陷阱**：有些候选人会习惯性地加 `throw TypeError` 做参数校验，但题目明确要求"静默处理"。理解何时该抛错、何时该静默，体现的是对组件定位的理解——基础设施组件应该宽容，业务组件可以严格。
+
 ### 一句话总结
 
 > **Observer 是"我知道你在听"，PubSub 是"我对着空气说话，有人接就有人接"。**

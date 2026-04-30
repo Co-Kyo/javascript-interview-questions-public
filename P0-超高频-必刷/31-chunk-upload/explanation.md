@@ -135,6 +135,55 @@ controller.abort();
 
 ---
 
+## 易错点：分片并发控制的核心逻辑
+
+本题**没有对 `file`、`chunkSize`、`concurrency`、`maxRetries` 做参数校验**（不抛 `TypeError`/`RangeError`），而是聚焦于核心功能链的正确实现。面试中最容易出错的不是参数校验，而是以下几个环节：
+
+### 1. 并发池调度逻辑
+
+```javascript
+// ❌ 常见错误：用 Promise.all 一次性发完
+await Promise.all(chunks.map(chunk => upload(chunk)));
+
+// ✅ 正确：并发池 + Promise.race 逐步调度
+while (nextIndex < totalChunks || executing.size > 0) {
+  while (nextIndex < totalChunks && executing.size < concurrency) {
+    const index = nextChunkIndex++;
+    const promise = uploadChunk(index)
+      .then(() => executing.delete(promise))
+      .catch((error) => { executing.delete(promise); throw error; });
+    executing.add(promise);
+  }
+  if (executing.size > 0) {
+    await Promise.race(executing);
+  }
+}
+```
+
+**关键点**：外层 `while` 条件是 `nextIndex < totalChunks || executing.size > 0`，必须同时检查"还有任务未调度"和"还有任务在执行"，否则会提前退出。
+
+### 2. 进度回调时机
+
+进度必须在**单个分片上传成功后**立即回调，而不是等所有分片完成。`uploadedCount++` 放在 `uploadChunk` 的 try 块内，catch 中不要重复计数。
+
+### 3. 取消与重试的交互
+
+取消（`AbortError`）必须**跳过重试逻辑直接抛出**，否则用户取消后还会继续重试：
+
+```javascript
+catch (error) {
+  if (error.name === 'AbortError') throw error;  // 取消不重试
+  if (!isRetryableError(error)) throw error;       // 不可重试错误直接抛
+  // 只有可重试错误才进入重试逻辑
+}
+```
+
+### 4. 核心功能链完整性
+
+分片上传的完整链路是：**分片 → 并发 → 进度 → 重试 → 合并 → 取消**。漏掉任何一环都不完整——特别是最后的 `/upload/merge` 合并请求和 `AbortController` 的返回。
+
+---
+
 ## 复杂度分析
 
 | 维度 | 复杂度 | 说明 |

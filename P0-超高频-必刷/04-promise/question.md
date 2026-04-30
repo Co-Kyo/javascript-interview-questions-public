@@ -47,6 +47,29 @@ MyPromise.all([MyPromise.resolve(1), 2, Promise.resolve(3)])
   .then(v => console.log(v));  // [1, 2, 3]
 ```
 
+## 实现分级
+
+### 基础版（面试高频，建议优先掌握）
+覆盖以下功能即可应对多数面试：
+- 构造函数 + 三态管理（pending/fulfilled/rejected）
+- then 方法 + 链式调用 + 值穿透
+- catch / finally
+- Promise.all / Promise.race
+- 静态方法 resolve / reject
+
+预计行数：80-120 行
+
+### 完整 A+ 版（大厂高级岗位/take-home）
+在基础版之上增加：
+- thenable 解析（递归解析 thenable 对象）
+- 循环引用检测（reject TypeError）
+- Promise.allSettled
+- resolvePromise 递归解析函数
+
+预计行数：150-200 行
+
+> 当前 solution.js 为完整 A+ 版。
+
 ## 评分标准
 
 | 维度 | 优秀 | 合格 | 不合格 |

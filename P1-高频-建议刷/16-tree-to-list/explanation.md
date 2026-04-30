@@ -116,36 +116,7 @@ function treeToListBFS(tree, idKey = 'id', childrenKey = 'children') {
 
 **遍历顺序**：`1 → 4 → 2 → 3 → 7 → 5 → 6`，BFS 逐层遍历，同层节点紧邻。
 
-### 3.3 treeToListDFSIterative — 迭代 DFS（避免栈溢出）
-
-```javascript
-function treeToListDFSIterative(tree, idKey = 'id', childrenKey = 'children') {
-  if (!Array.isArray(tree)) return [];
-
-  const result = [];
-  const stack = [...tree].reverse().map(node => ({ node, parentId: null }));
-
-  while (stack.length) {
-    const { node, parentId } = stack.pop();
-    const { [childrenKey]: children, ...rest } = node;
-    result.push({ ...rest, parentId });
-
-    if (children?.length) {
-      for (let i = children.length - 1; i >= 0; i--) {
-        stack.push({ node: children[i], parentId: node[idKey] });
-      }
-    }
-  }
-
-  return result;
-}
-```
-
-**`[...tree].reverse()`**：反转后入栈，保证从左到右的遍历顺序（栈是后进先出）。
-
-**`for (let i = children.length - 1; i >= 0; i--)`**：子节点逆序入栈，这样第一个子节点最后入栈、最先出栈，保持从左到右的顺序。
-
-### 面试怎么选
+### 3.3 DFS vs BFS 对比
 
 | 维度 | DFS（递归） | BFS（队列） |
 |------|------------|------------|
@@ -191,30 +162,7 @@ function traverse(nodes, parentId, level = 0) {
 
 ### Q3：反向操作：列表转树
 
-```javascript
-function listToTree(list, idKey = 'id', parentKey = 'parentId') {
-  const map = new Map();
-  const result = [];
-
-  for (const item of list) {
-    map.set(item[idKey], { ...item, children: [] });
-  }
-
-  for (const item of list) {
-    const node = map.get(item[idKey]);
-    if (item[parentKey] === null || item[parentKey] === undefined) {
-      result.push(node);
-    } else {
-      const parent = map.get(item[parentKey]);
-      if (parent) parent.children.push(node);
-    }
-  }
-
-  return result;
-}
-```
-
-两遍扫描：第一遍建 `id → node` 的映射，第二遍挂载子节点。时间复杂度 O(n)。
+口头讨论方向——两遍扫描：第一遍建 `id → node` 的映射，第二遍遍历列表，根据 `parentId` 挂载到对应父节点的 `children` 数组中。时间复杂度 O(n)。
 
 ### Q4：如何高效查找某个节点的所有子节点？
 
@@ -227,7 +175,6 @@ function listToTree(list, idKey = 'id', parentKey = 'parentId') {
 | 易错点 | 说明 |
 |-------|------|
 | 忘记去掉 children 字段 | 结果中不应包含 children，否则不是真正的"拍平" |
-| 根节点 parentId 不为 null | `listToTree` 还原时会找不到根 |
+| 根节点 parentId 不为 null | 还原时会找不到根 |
 | BFS 用 shift() | 每次 O(n) 重排，整体退化为 O(n²)，应用索引 |
-| 迭代 DFS 未反转子节点 | 入栈顺序错误导致遍历顺序与递归版不一致 |
 | 未处理空数组/null 输入 | 应返回空数组而非报错 |
