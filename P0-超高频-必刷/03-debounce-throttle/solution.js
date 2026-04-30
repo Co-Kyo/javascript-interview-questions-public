@@ -1,152 +1,81 @@
 function debounce(fn, delay, options = {}) {
   const { leading = false, trailing = true } = options;
-
-  let timerId = null;
+  let timer = null;
   let lastArgs = null;
   let lastThis = null;
-  let lastCallTime = 0;
-  let result;
 
-  function invokeFunc() {
-    const args = lastArgs;
-    const thisArg = lastThis;
-    lastArgs = null;
-    lastThis = null;
-    result = fn.apply(thisArg, args);
-    return result;
-  }
-
-  function startTimer(pendingFunc, wait) {
-    return setTimeout(pendingFunc, wait);
-  }
-
-  function cancel() {
-    if (timerId !== null) {
-      clearTimeout(timerId);
-      timerId = null;
-    }
-    lastArgs = null;
-    lastThis = null;
-    lastCallTime = 0;
-  }
-
-  function leadingEdge() {
-    lastCallTime = Date.now();
-    if (leading) {
-      return invokeFunc();
-    }
-    timerId = startTimer(trailingEdge, delay);
-  }
-
-  function trailingEdge() {
-    timerId = null;
-    if (trailing && lastArgs) {
-      return invokeFunc();
-    }
-    lastArgs = null;
-    lastThis = null;
-  }
-
-  function remainingWait() {
-    const timeSinceLastCall = Date.now() - lastCallTime;
-    return Math.max(0, delay - timeSinceLastCall);
-  }
-
-  function debounced(...args) {
-    const now = Date.now();
+  const debounced = function (...args) {
     lastArgs = args;
     lastThis = this;
 
-    const isFirstCall = (lastCallTime === 0);
-    if (isFirstCall) {
-      if (leading) {
-        leadingEdge();
-      } else {
-        lastCallTime = now;
-        timerId = startTimer(trailingEdge, delay);
-      }
-      return result;
+    // 首次调用 + leading 模式：立即执行
+    if (!timer && leading) {
+      fn.apply(lastThis, lastArgs);
+      lastArgs = null;
+      lastThis = null;
+      // 仍设置定时器，防止 delay 内再次触发
+      timer = setTimeout(() => { timer = null; }, delay);
+      return;
     }
 
-    lastCallTime = now;
-
-    if (timerId !== null) {
-      clearTimeout(timerId);
+    // 重置定时器（trailing 模式下 delay 结束后执行）
+    if (timer) clearTimeout(timer);
+    if (trailing) {
+      timer = setTimeout(() => {
+        timer = null;
+        if (lastArgs) {
+          fn.apply(lastThis, lastArgs);
+          lastArgs = null;
+          lastThis = null;
+        }
+      }, delay);
+    } else {
+      timer = setTimeout(() => { timer = null; }, delay);
     }
-    timerId = startTimer(trailingEdge, remainingWait());
+  };
 
-    return result;
-  }
+  debounced.cancel = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    lastArgs = null;
+    lastThis = null;
+  };
 
-  debounced.cancel = cancel;
   return debounced;
 }
 
-
 function throttle(fn, interval, options = {}) {
   const { leading = true, trailing = true } = options;
-
-  let timerId = null;
-  let lastArgs = null;
-  let lastThis = null;
+  let timer = null;
   let previous = 0;
-  let result;
 
-  function invokeFunc() {
-    const args = lastArgs;
-    const thisArg = lastThis;
-    lastArgs = null;
-    lastThis = null;
-    result = fn.apply(thisArg, args);
-    return result;
-  }
-
-  function cancel() {
-    if (timerId !== null) {
-      clearTimeout(timerId);
-      timerId = null;
-    }
-    lastArgs = null;
-    lastThis = null;
-    previous = 0;
-  }
-
-  function trailingEdge() {
-    timerId = null;
-    if (trailing && lastArgs) {
-      result = invokeFunc();
-    }
-  }
-
-  function throttled(...args) {
+  const throttled = function (...args) {
     const now = Date.now();
 
-    if (previous === 0 && !leading) {
-      previous = now;
-    }
+    // 首次调用 + 非 leading 模式：记录时间但不执行
+    if (!previous && !leading) previous = now;
 
     const remaining = interval - (now - previous);
-    lastArgs = args;
-    lastThis = this;
 
     if (remaining <= 0) {
-      if (timerId !== null) {
-        clearTimeout(timerId);
-        timerId = null;
-      }
+      // 已过冷却期，立即执行
+      if (timer) { clearTimeout(timer); timer = null; }
       previous = now;
-      result = invokeFunc();
-    } else if (timerId === null && trailing) {
-      timerId = setTimeout(function () {
+      fn.apply(this, args);
+    } else if (!timer && trailing) {
+      // 冷却期内，设置 trailing 定时器
+      timer = setTimeout(() => {
         previous = leading ? Date.now() : 0;
-        trailingEdge();
+        timer = null;
+        fn.apply(this, args);
       }, remaining);
     }
+  };
 
-    return result;
-  }
+  throttled.cancel = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    previous = 0;
+  };
 
-  throttled.cancel = cancel;
   return throttled;
 }
 
