@@ -1,0 +1,23 @@
+[
+  {
+    "id": 1,
+    "prompt": "帮我把 P0-超高频-必刷/29-singleton/explanation.md 改成引导式教材，生成 guide.md 和 guide.html",
+    "expected": "输出 guide.md（逐步引导单例模式的实现）+ guide.html（交互式版本，含可运行代码），概念覆盖完整，代码可拼接成 solution.js",
+    "complexity": "low",
+    "rationale": "单例模式概念少、结构简单，测试 skill 的基本功能是否正常"
+  },
+  {
+    "id": 2,
+    "prompt": "P0-超高频-必刷/01-call-apply-bind/explanation.md 太密了，初学者看不懂，帮我做个引导式讲解",
+    "expected": "guide.md 按概念依赖顺序拆解 call/apply/bind，每步 ≤10 行代码；guide.html 含 this 绑定动画演示 + 可运行代码沙盒",
+    "complexity": "medium",
+    "rationale": "多概念（this绑定/隐式绑定/Symbol/new优先级/原型链），测试拓扑排序和步骤拆分能力"
+  },
+  {
+    "id": 3,
+    "prompt": "P0-超高频-必刷/04-promise/explanation.md 有 300 多行，概念太密集，做成引导式教程吧",
+    "expected": "guide.md 将 Promise 实现拆成最小可理解步骤（状态机→then链→值穿透→微任务），guide.html 含 Promise 状态流转动画",
+    "complexity": "high",
+    "rationale": "最复杂的 explanation（316行），概念密度最高，测试 skill 处理长文档和复杂依赖图的能力"
+  }
+]

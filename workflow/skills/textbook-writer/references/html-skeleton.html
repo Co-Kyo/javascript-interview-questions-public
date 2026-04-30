@@ -1,0 +1,122 @@
+# HTML 骨架模板
+
+guide.html 的起始模板。每个 Step section 必须包含：困境、解法、代码、运行按钮、输出区。
+
+```html
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{题名} — 引导式讲解</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f0f13; color: #e4e4ef; font-family: -apple-system, 'Segoe UI', sans-serif; line-height: 1.7; padding: 2rem 1rem; max-width: 800px; margin: 0 auto; }
+  h1 { font-size: 1.8rem; margin-bottom: 0.5rem; color: #fff; }
+  h2 { font-size: 1.3rem; margin: 2rem 0 0.8rem; color: #6c8cff; border-left: 3px solid #6c8cff; padding-left: 0.8rem; }
+  .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
+
+  /* 进度条 */
+  .progress-bar { position: fixed; top: 0; left: 0; height: 3px; background: #6c8cff; transition: width 0.3s; z-index: 100; }
+
+  /* 步骤卡片 */
+  .step { background: #1a1a24; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #2a2a3a; }
+  .step h2 { margin-top: 0; }
+
+  /* 困境+解法 */
+  .困境 { background: #1c1507; border-left: 3px solid #f59e0b; padding: 0.8rem 1rem; border-radius: 0 8px 8px 0; margin: 0.8rem 0; }
+  .解法 { background: #071c12; border-left: 3px solid #10b981; padding: 0.8rem 1rem; border-radius: 0 8px 8px 0; margin: 0.8rem 0; }
+  .验证 { color: #888; font-size: 0.85rem; margin-top: 0.5rem; }
+
+  /* 代码块 */
+  pre { background: #0a0a10; border-radius: 8px; padding: 1rem; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; margin: 0.8rem 0; position: relative; }
+  code { font-family: 'Fira Code', 'Consolas', monospace; color: #c9d1d9; }
+  .kw { color: #ff7b72; } .str { color: #a5d6ff; } .cm { color: #8b949e; } .fn { color: #d2a8ff; }
+
+  /* 运行按钮 */
+  .run-btn { background: #238636; color: #fff; border: none; padding: 0.5rem 1.2rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; margin-top: 0.5rem; transition: background 0.2s; }
+  .run-btn:hover { background: #2ea043; }
+  .output { background: #0a0a10; border-radius: 8px; padding: 0.8rem; margin-top: 0.5rem; font-family: monospace; font-size: 0.8rem; color: #8b949e; min-height: 2rem; white-space: pre-wrap; }
+  .pass { color: #10b981; } .fail { color: #f87171; }
+
+  /* 手风琴 */
+  .toggle { cursor: pointer; user-select: none; }
+  .toggle::before { content: '▶ '; font-size: 0.7rem; transition: transform 0.2s; display: inline-block; }
+  .toggle.open::before { transform: rotate(90deg); }
+  .body { max-height: 0; overflow: hidden; transition: max-height 0.4s ease; }
+  .body.open { max-height: 5000px; }
+
+  /* 响应式 */
+  @media (max-width: 640px) { body { padding: 1rem 0.5rem; } h1 { font-size: 1.4rem; } }
+</style>
+</head>
+<body>
+<div class="progress-bar" id="progress"></div>
+<h1>{题名} — 引导式讲解</h1>
+<p class="subtitle">基于 explanation.md 改写 · 逐步引导 · 可运行验证</p>
+
+<!-- 每个 Step -->
+<div class="step" id="step-1">
+  <h2 class="toggle" onclick="toggle(this)">Step 1: {概念名}</h2>
+  <div class="body">
+    <div class="困境"><strong>困境：</strong>{困境描述}</div>
+    <p><strong>思考：</strong>{引导问题}</p>
+    <div class="解法"><strong>解法：</strong>{解法说明}</div>
+    <pre><code id="code-1">{代码}</code></pre>
+    <button class="run-btn" onclick="runCode(1)">▶ 运行验证</button>
+    <div class="output" id="output-1"></div>
+    <div class="验证">运行后观察输出，确认结果符合预期 ✅</div>
+  </div>
+</div>
+
+<!-- 重复 Step 2, 3, ... N -->
+
+<script>
+function toggle(el) {
+  el.classList.toggle('open');
+  el.nextElementSibling.classList.toggle('open');
+  updateProgress();
+}
+
+function runCode(n) {
+  const code = document.getElementById('code-' + n).textContent;
+  const out = document.getElementById('output-' + n);
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...a) => logs.push(a.map(String).join(' '));
+  try {
+    new Function(code)();
+    out.innerHTML = '<span class="pass">✅ 通过</span>\n' + logs.join('\n');
+  } catch (e) {
+    out.innerHTML = '<span class="fail">❌ ' + e.message + '</span>';
+    if (logs.length) out.innerHTML += '\n' + logs.join('\n');
+  }
+  console.log = origLog;
+}
+
+function updateProgress() {
+  const steps = document.querySelectorAll('.step');
+  const open = document.querySelectorAll('.step .body.open').length;
+  document.getElementById('progress').style.width = (open / steps.length * 100) + '%';
+}
+
+// 默认展开第一步
+document.querySelector('.step .toggle')?.click();
+</script>
+</body>
+</html>
+```
+
+## 使用方式
+
+1. 复制此模板
+2. 替换 `{题名}` 为题目名称
+3. 对每个 Step：替换 `{概念名}`、`{困境描述}`、`{引导问题}`、`{解法说明}`、`{代码}`
+4. 复制 Step div 块，为每个步骤生成一个
+5. 确保 `runCode(N)` 中的 N 与步骤编号一致
+
+## 定制
+
+- 如需 SVG 图解：在对应 Step 的 `.body` 内插入 `<svg>` 块
+- 如需 diff 高亮：用 `<span class="removed">` 和 `<span class="added">` 标记
+- 如需概念速查表：在所有 Step 之后添加 `<table>` 总结
